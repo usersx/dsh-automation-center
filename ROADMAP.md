@@ -5,7 +5,7 @@
 - [x] Confirm the global sidebar entry and main-page interaction.
 - [x] Define P0 acceptance criteria and release vetoes.
 - [x] Define the two-repository architecture.
-- [ ] Publish the public project repository.
+- [x] Publish the public project repository.
 
 ## Milestone 1 — DSH shell extension
 
