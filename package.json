@@ -1,0 +1,19 @@
+{
+  "name": "dsh-automation-center",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A global Automation Center for DeepSeek Harness",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check-repository.mjs"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/usersx/dsh-automation-center.git"
+  },
+  "license": "MIT"
+}
+
