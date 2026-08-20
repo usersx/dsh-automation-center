@@ -81,5 +81,4 @@ CLI、Scheduler、Loopback RPC、Agent Tools 和 Client UI 都只能调用这个
 
 ## 发布边界
 
-在 DSH 上游提供 `sidebar.primary.action` 和 `shell.page` 以前，项目保持 Pre-alpha，不发布伪装成可用插件的空 Bundle。正式发布必须满足 [验收标准](acceptance-criteria.zh-CN.md) 中全部 P0 条目。
-
+当前插件已经提供可安装的 Host/Web Bundle；DSH Shell Patch 也已实现并通过对应源码测试。由于两个通用扩展点尚未进入 DSH 上游 `0.1.0-rc.7`，Release 必须明确标记为 Alpha，并把“上游原版 DSH”列为不兼容，而不能伪称开箱即用。只有 [验收标准](acceptance-criteria.zh-CN.md) 中全部 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。
