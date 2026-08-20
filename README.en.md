@@ -15,7 +15,7 @@ Every occurrence creates a fresh root Agent and Result Session in the selected W
 
 > Current version: `0.1.0-alpha.3`. It targets DSH `0.1.0-rc.8` and requires the companion Shell Slot Patch. Compatibility validation is not a security audit.
 
-## Install from npm (recommended)
+## Install from npm (recommended; pending 2FA publish authorization)
 
 ```sh
 dsh plugin --profile web add dsh-automation-center@latest
