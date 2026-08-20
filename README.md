@@ -1,152 +1,188 @@
 # DSH Automation Center
 
-[中文](README.zh.md) | English
+中文 | [English](README.en.md)
 
-![DeepSeek whale girl orchestrating an automation pipeline](docs/assets/deepseek-whale-girl-automation.png)
+[![npm version](https://img.shields.io/npm/v/dsh-automation-center.svg)](https://www.npmjs.com/package/dsh-automation-center)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A global automation workspace for DeepSeek Harness. **Automations** is a root action directly below **New Session** and above **Workspaces**. It opens a full center page instead of living inside a Conversation or Trajectory tab.
+> 题图是“DeepSeek 鲸鱼娘与自动化”的项目插画，不是产品界面截图。下方所有功能截图均来自 DSH `0.1.0-rc.8` 的原版 DeepSeek 官方皮肤。
 
-Every occurrence creates a fresh root Agent and Result Session in the selected workspace. Automation Center owns definitions, schedules, permissions and run history; the Result Session owns the complete result and audit trail. Its title is pinned to the automation task name rather than the workspace/project name.
+![DeepSeek 鲸鱼娘编排自动化任务](docs/assets/deepseek-whale-girl-automation.png)
 
-> Current release: `0.1.0-alpha.2`. It requires the companion DSH shell patch and is not compatible with an unmodified upstream `0.1.0-rc.7`. Compatibility validation is not a security audit.
+DSH Automation Center 是面向 [DeepSeek Harness](https://github.com/usersx/deepseek-harness) 的全局自动化任务插件。“自动化”与“新会话”同级，固定在左侧栏“新会话”下方、“工作区”上方；点击后打开完整任务中心，不需要先进入某个 Session。
 
-## Why this exists
+每次触发都会在指定 Workspace 中创建一个全新的根 Agent 和 Result Session。任务定义、计划、权限与运行历史由 Automation Center 管理；完整结果与审计轨迹保存在 Result Session 中，并以自动化任务名作为会话标题。
 
-A Session-level automation tab creates an information-architecture mismatch: users must enter one Session to manage work that runs in another new Session. Automation Center moves the management surface to the global shell:
+> 当前版本：`0.1.0-alpha.3`。目标版本为 DSH `0.1.0-rc.8`，需要配套的 Shell Slot Patch。兼容性通过不等于安全审计通过。
 
-- visible without first opening a Session;
-- cross-workspace definitions, schedules and failure attention;
-- a full root page, not a conversation tab or modal;
-- one independent, auditable Result Session per run;
-- shell-owned action chrome that follows native and custom sidebar skins.
+## 从 npm 安装（推荐）
 
-## Capabilities
+插件已发布到 npm，一条命令安装：
 
-### Global center
-
-- All-workspace overview, workspace filter, summary cards and recent runs.
-- Root sidebar action with the exact New Session geometry in expanded and collapsed layouts.
-- `aria-current` semantics without a selected-color/background paint layer.
-- Attention badge for failed or unread runs.
-
-### Scheduling and management
-
-- One-time, fixed-interval, daily and weekly schedules.
-- Explicit IANA time zones and a next-run preview from the same recurrence engine used by the scheduler.
-- Create, edit, pause, resume, delete, run-now and cancel flows.
-- Idempotent create requests so retries do not duplicate definitions.
-
-### Fresh Session execution
-
-- A new root Agent and Session for every occurrence; conversation sessions are never reused.
-- Result Session titles are pinned to the automation task name.
-- No inherited chat history, parent relationship or temporary human approval.
-- Read-only and workspace-write unattended permission modes.
-- Deterministic occurrence claims, overlap protection, bounded misfire handling and restart recovery.
-- Durable history, summaries, Result Session links and structured error codes.
-
-### Migration and conflict protection
-
-- Read-only import of legacy `dsh_automation` v1 definitions and runs.
-- Idempotent migration; the source domain remains intact for rollback.
-- Explicit `AUTOMATION_PLUGIN_CONFLICT` when the original scheduler remains enabled.
-
-## Screenshots
-
-### 1. Root entry beside New Session
-
-The expanded action uses the same centered shell chrome; the collapsed rail uses the same circular skin.
-
-<p align="center">
-  <img src="docs/assets/sidebar-expanded-fixed.png" alt="Automation action in the expanded sidebar" width="49%">
-  <img src="docs/assets/sidebar-collapsed-fixed.png" alt="Automation action in the collapsed sidebar" width="49%">
-</p>
-
-### 2. Global Automation Center
-
-The action opens a complete cross-workspace page. Current-page semantics do not add a selected paint layer.
-
-![Automation Center keeps the same skin after selection](docs/assets/desktop-no-active-paint.png)
-
-### 3. Create an automation
-
-The editor configures the task, workspace, schedule, time zone, Agent preset, permission and timeout, with a next-run preview before save.
-
-![Create automation form](docs/assets/create-form.png)
-
-### 4. Fresh Result Session
-
-Every Run creates an independent Session whose title is the automation task name, while the run list retains its summary and return link.
-
-![Result Session titled from the automation task](docs/assets/result-session-title.png)
-
-An [onboarding empty state](docs/assets/automation-center-empty.png) is shown before the first task is created.
-
-## Architecture
-
-```text
-Root sidebar action
-        │
-        ▼
-Automation Center ──RPC──▶ AutomationEngine ──▶ durable Definitions / Runs
-                                        │
-                           schedule, run-now or recovery
-                                        │
-                                        ▼
-                              Fresh Agent + Session
-                                        │
-                         pin task title, policy and workspace
-                                        │
-                                        ▼
-                              Result Session + audit
+```sh
+dsh plugin --profile web add dsh-automation-center@latest
 ```
 
-The Host-side engine is the deep module. Client UI, loopback RPC, scheduler and Agent tools call its `snapshot` / `dispatch` boundary rather than accessing storage directly.
+Desktop Profile：
 
-## Compatibility
+```sh
+dsh plugin --profile desktop add dsh-automation-center@latest
+```
 
-Upstream DSH `0.1.0-rc.7` does not yet expose the two generic client slots required by a true root page:
+安装后完整退出并重新打开 DSH，让 Host Bundle 在启动时挂载。不要只刷新网页。
+
+安装前请确认：
+
+1. DSH 基于 [`agent/automation-shell-pages-rc8`](https://github.com/usersx/deepseek-harness/tree/agent/automation-shell-pages-rc8) 分支构建。
+2. 已移除或停用旧的 `@dsh-external/dsh-automation`，避免两套 Scheduler 同时运行。
+3. Node.js 使用 DSH 支持的 `^22.19.0` 或 `>=24.0.0`。
+
+## 为什么需要独立的自动化中心
+
+Session 内的自动化标签存在信息架构冲突：用户必须先进入一个会话才能管理任务，但每次执行又会创建另一个新 Session。Automation Center 把管理入口提升到全局 Shell：
+
+- 无需先打开任何 Session；
+- 跨 Workspace 查看任务、计划、最近运行和失败项；
+- 使用完整根页面，而不是 Conversation 标签或弹窗；
+- 每次运行都有独立、可审计、可直接打开的 Result Session；
+- 入口外壳由 DSH Sidebar 统一渲染，与“新会话”保持同宽、同中心线和同皮肤。
+
+## 功能
+
+### 全局任务中心
+
+- 全 Workspace 总览、Workspace 筛选、统计卡片与最近运行。
+- 左侧栏根入口：展开态与“新会话”同为 252 × 38，内容中心偏移为 0；收起态同为 36 × 36。
+- 点击后不增加选中底色，也不会残留鼠标焦点涂层；仍保留 `aria-current="page"` 语义。
+- 失败、中断或跳过的未读运行显示注意力徽标。
+
+### 计划与任务管理
+
+- 一次性、固定间隔、每日和每周计划。
+- 显式 IANA 时区，并使用同一 recurrence engine 预览下次运行。
+- 创建、编辑、暂停、恢复、删除、立即运行和取消。
+- 创建请求幂等，网络重试不会生成重复 Definition。
+
+### Fresh Session 执行
+
+- 每次 occurrence 创建新的根 Agent 和 Session，不复用聊天会话。
+- Result Session 标题使用自动化任务名，而不是 Workspace 或项目名。
+- 不继承创建者的聊天历史、父子关系或临时人工授权。
+- 支持“只读”和“Workspace 可写”两种无人值守权限。
+- 同一任务防重叠、确定性 occurrence 领取、有限 misfire 补偿和 Host 重启恢复。
+- 持久运行历史、摘要、Result Session 入口和结构化错误码。
+
+### 迁移与冲突保护
+
+- 只读导入旧 `dsh_automation` v1 Definition 与 Run，原存储域保持不变。
+- 迁移幂等，可以卸载新插件后回滚。
+- 检测到旧 Scheduler 时明确报 `AUTOMATION_PLUGIN_CONFLICT`，不会静默启动两套调度器。
+
+## 原版 DeepSeek 界面截图
+
+### 1. 与“新会话”同级且居中
+
+<p align="center">
+  <img src="docs/assets/sidebar-expanded-fixed.png" alt="原版 DeepSeek 展开侧栏中的自动化入口" width="68%">
+  <img src="docs/assets/sidebar-collapsed-fixed.png" alt="原版 DeepSeek 折叠侧栏中的自动化入口" width="18%">
+</p>
+
+### 2. 全局 Automation Center
+
+![原版 DeepSeek 皮肤中的 Automation Center](docs/assets/automation-center-empty.png)
+
+### 3. 创建自动化任务
+
+![原版 DeepSeek 皮肤中的自动化创建表单](docs/assets/create-form.png)
+
+## 使用方法
+
+1. 点击左侧栏“自动化”。
+2. 点击“新建自动化”或“创建第一个自动化”。
+3. 填写名称、任务指令、Workspace、计划、时区、Agent Preset、权限和超时。
+4. 检查下次运行预览并保存。
+5. 等待计划触发，或点击“立即运行”。
+6. 在“最近运行”查看摘要，并打开 Result Session 查看完整结果。
+
+建议先用“只读”权限和无外部副作用的小任务验证配置，再逐步开放 Workspace 写权限。
+
+## 工作原理
+
+```text
+Sidebar 根入口
+      │
+      ▼
+Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run 存储
+                                      │
+                          计划、立即运行或恢复调度
+                                      │
+                                      ▼
+                          Fresh Agent + Fresh Session
+                                      │
+                       固定任务标题、权限与 Workspace
+                                      │
+                                      ▼
+                          Result Session + 审计记录
+```
+
+核心复杂度集中在 Host 侧 `AutomationEngine`。Client、Loopback RPC、Scheduler 和 Agent Tools 只调用 `snapshot` / `dispatch` 边界，不直接读写存储域。
+
+## 兼容性
+
+未经修改的上游 DSH `0.1.0-rc.8` 尚未提供真正根级页面所需的两个通用 Client Slot：
 
 - `sidebar.primary.action`
 - `shell.page`
 
-Use the [`agent/automation-shell-pages` branch of usersx/deepseek-harness](https://github.com/usersx/deepseek-harness/tree/agent/automation-shell-pages). This plugin never injects DOM nodes or replaces the Sidebar. It fails explicitly with `DSH_AUTOMATION_INCOMPATIBLE` when the required slots are absent.
+因此当前需要 [usersx/deepseek-harness 的 rc.8 Shell Patch 分支](https://github.com/usersx/deepseek-harness/tree/agent/automation-shell-pages-rc8)。插件不会注入 DOM，也不会替换整棵 Sidebar；扩展点缺失时会明确报 `DSH_AUTOMATION_INCOMPATIBLE`。
 
-| Target | Status |
+| 目标 | 状态 |
 |---|---|
-| DSH `0.1.0-rc.7` + shell patch / Web | observed pass |
-| macOS DSH Desktop 2.0.1 test copy | observed pass |
-| Better Sidebar 0.12.1 + Maid Atelier skin | observed pass |
-| unmodified upstream DSH `0.1.0-rc.7` | incompatible: slots absent |
-| native Windows / Linux Desktop | not yet observed |
+| DSH `0.1.0-rc.8` + Shell Patch / Web / 原版官方皮肤 | 已观察通过 |
+| 未修改的上游 DSH `0.1.0-rc.8` | 不兼容：缺少两个 Slot |
+| macOS 原生 Desktop + rc.8 Patch | 尚未重新实机验收 |
+| Windows / Linux 原生 Desktop | 尚未实机验收 |
 
-See the exact [acceptance results](docs/acceptance-results-2026-08-20.md), including unrun cases.
+精确结果与未运行项见[验收结果](docs/acceptance-results-2026-08-20.md)。
 
-## Install
+## 配置
 
-Prerequisites:
+| 配置项 | 默认值 | 说明 |
+|---|---:|---|
+| `maxConcurrentRuns` | `2` | 全局同时运行的最大 Run 数，范围 1–32 |
+| `runTimeoutMinutes` | `60` | 默认单次运行超时，范围 1–1440 分钟 |
+| `misfireGraceMinutes` | `15` | Host 暂停后的有限补偿窗口 |
+| `historyLimit` | `200` | 每个 Automation 保留的 Run 上限 |
+| `archiveRunSessions` | `false` | 完成后是否归档 Result Session；Run 审计行仍保留 |
 
-1. Run a DSH build containing the shell patch.
-2. Remove or disable the original `@dsh-external/dsh-automation`.
-3. Use a DSH-supported Node version: `^22.19.0` or `>=24.0.0`.
+## 安全边界
 
-Web profile:
+- 管理 RPC 只接受可信 Loopback 连接。
+- UI 只能提交已注册的 Workspace ID，不能传任意宿主绝对路径。
+- Automation Agent 不能递归创建 Automation，也不能等待人工授权。
+- 无人值守工具使用白名单，并拒绝后台进程逃逸。
+- Host 重启后不盲目重试可能已经产生副作用的中断 Run。
+- 日志和 RPC 错误不得输出 Prompt、Token、环境变量或凭证。
+- 取消只能终止后续执行，无法回滚已经完成的副作用。
+
+## 开发与验证
 
 ```sh
-dsh plugin --profile web add \
-  https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.2/dsh-automation-center-0.1.0-alpha.2.tgz
+pnpm install
+pnpm check
 ```
 
-Desktop profile:
+当前已观察：插件测试 67 / 67 通过；配套 DSH Layout / Sidebar / Workspace 测试 216 / 216 通过；rc.8 原版皮肤浏览器实测两个展开入口同为 252 × 38、中心偏移 0px，点击后的背景与“新会话”一致。
 
-```sh
-dsh plugin --profile desktop add \
-  https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.2/dsh-automation-center-0.1.0-alpha.2.tgz
-```
+## 文档
 
-Fully quit and reopen DSH after installation so the Host bundle mounts.
+- [验收标准](docs/acceptance-criteria.zh-CN.md)
+- [验收结果](docs/acceptance-results-2026-08-20.md)
+- [技术方案](docs/technical-design.zh-CN.md)
+- [实施路线](ROADMAP.md)
+- [第三方代码声明](THIRD_PARTY_NOTICES.md)
 
-From source:
+## 从源码安装
 
 ```sh
 git clone https://github.com/usersx/dsh-automation-center.git
@@ -154,66 +190,16 @@ cd dsh-automation-center
 pnpm install
 pnpm check
 npm pack
-dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.2.tgz
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.3.tgz
 ```
 
-## Use
+## 已知限制
 
-1. Select **Automations** in the root sidebar.
-2. Choose **New automation**.
-3. Set the name, prompt, workspace, schedule, time zone, Agent preset, permission and timeout.
-4. Review the next-run preview and save.
-5. Wait for the schedule or choose **Run now**.
-6. Inspect the summary and open the Result Session for the complete trace.
+- 当前仍需要 rc.8 Shell Patch。
+- 第一版不提供分布式 Scheduler、远程执行节点或云端凭证托管。
+- 取消不会撤销已经发生的文件修改或外部调用。
+- 当前仍是 Alpha；稳定版发布条件以验收文档为准。
 
-Start with read-only permission and a bounded task before enabling workspace writes.
-
-## Configuration
-
-| Option | Default | Meaning |
-|---|---:|---|
-| `maxConcurrentRuns` | `2` | global running-run limit, 1–32 |
-| `runTimeoutMinutes` | `60` | default run timeout, 1–1440 minutes |
-| `misfireGraceMinutes` | `15` | bounded catch-up window after Host downtime |
-| `historyLimit` | `200` | retained runs per automation |
-| `archiveRunSessions` | `false` | archive completed Result Sessions while retaining Run audit rows |
-
-## Safety model
-
-- Management RPC accepts trusted loopback connections only.
-- UI input accepts registered workspace IDs, never arbitrary host paths.
-- Automation Agents cannot create more automations or wait for interactive approval.
-- Unattended tools are allowlisted; background process escape is rejected.
-- Restart never blindly replays an interrupted run that may already have side effects.
-- Logs and RPC errors must not expose prompts, tokens, environment variables or credentials.
-- Cancellation stops future execution but cannot roll back completed side effects.
-
-## Development and validation
-
-```sh
-pnpm install
-pnpm check
-```
-
-`pnpm check` runs TypeScript validation, Host/Web builds, tests and repository-contract checks. Current observed results: 67 / 67 plugin tests and 209 / 209 companion DSH Layout / Sidebar / Workspace tests.
-
-## Documentation
-
-- [Acceptance criteria (Chinese)](docs/acceptance-criteria.zh-CN.md)
-- [Acceptance results](docs/acceptance-results-2026-08-20.md)
-- [Technical design (Chinese)](docs/technical-design.zh-CN.md)
-- [GitHub ecosystem research (Chinese)](docs/research/github-automation-landscape-2026-08.md)
-- [X demand sample (Chinese)](docs/research/x-automation-needs-2026-08.md)
-- [Roadmap](ROADMAP.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
-
-## Known limitations
-
-- The shell patch is currently required.
-- The first release has no distributed scheduler, remote workers or cloud credential vault.
-- Cancellation cannot undo file changes or external calls that already occurred.
-- This remains an Alpha; stable release gates are defined in the acceptance documents.
-
-## License
+## 许可证
 
 [MIT](LICENSE)
