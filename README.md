@@ -13,7 +13,7 @@ DSH Automation Center 是面向 [DeepSeek Harness](https://github.com/usersx/dee
 
 每次触发都会在指定 Workspace 中创建一个全新的根 Agent 和 Result Session。任务定义、计划、权限与运行历史由 Automation Center 管理；完整结果与审计轨迹保存在 Result Session 中，并以自动化任务名作为会话标题。
 
-> 当前版本：`0.1.0-alpha.3`。目标版本为 DSH `0.1.0-rc.8`，需要配套的 Shell Slot Patch。兼容性通过不等于安全审计通过。
+> 当前版本：`0.1.0-alpha.4`。目标版本为 DSH `0.1.0-rc.8`，需要配套的 Shell Slot Patch。兼容性通过不等于安全审计通过。
 
 ## 从 npm 安装（推荐）
 
@@ -190,7 +190,7 @@ cd dsh-automation-center
 pnpm install
 pnpm check
 npm pack
-dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.3.tgz
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.4.tgz
 ```
 
 ## 已知限制

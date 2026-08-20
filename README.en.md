@@ -13,7 +13,7 @@ DSH Automation Center is a global automation workspace for [DeepSeek Harness](ht
 
 Every occurrence creates a fresh root Agent and Result Session in the selected Workspace. Automation Center owns definitions, schedules, permissions and run history; the Result Session owns the complete output and audit trail, and is titled from the automation task rather than the project name.
 
-> Current version: `0.1.0-alpha.3`. It targets DSH `0.1.0-rc.8` and requires the companion Shell Slot Patch. Compatibility validation is not a security audit.
+> Current version: `0.1.0-alpha.4`. It targets DSH `0.1.0-rc.8` and requires the companion Shell Slot Patch. Compatibility validation is not a security audit.
 
 ## Install from npm (recommended)
 
@@ -158,7 +158,7 @@ cd dsh-automation-center
 pnpm install
 pnpm check
 npm pack
-dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.3.tgz
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.4.tgz
 ```
 
 ## Known limitations

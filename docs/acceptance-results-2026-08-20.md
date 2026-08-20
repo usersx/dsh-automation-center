@@ -21,7 +21,7 @@
 | Profile | `desktop`、隔离 `web` Profile |
 | Sidebar | rc.8 原版 Sidebar；旧 Desktop 另观察 Better Sidebar 0.12.1 |
 | Theme | rc.8 原版 DeepSeek 官方皮肤 |
-| 插件 | `dsh-automation-center@0.1.0-alpha.3` |
+| 插件 | `dsh-automation-center@0.1.0-alpha.4` |
 
 ## 实机观察
 
