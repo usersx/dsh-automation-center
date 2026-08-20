@@ -45,7 +45,6 @@
 - [展开侧栏](assets/sidebar-expanded-fixed.png)
 - [折叠侧栏](assets/sidebar-collapsed-fixed.png)
 - [点击后无选中底色](assets/desktop-no-active-paint.png)
-- [Result Session 使用任务名](assets/result-session-title.png)
 
 ## 自动化覆盖
 
