@@ -35,7 +35,6 @@ test('client contributes one global page and one root sidebar action', async () 
       bind: () => (key: string) => key,
     },
     slots: {
-      entriesOfSlot: () => [],
       inject: (name: string, register: () => void) => { injectedSlots.push(name); register() },
       register: (options: any, component: unknown) => {
         registrations.push({ options, component })
@@ -63,12 +62,66 @@ test('client contributes one global page and one root sidebar action', async () 
   assert.deepEqual(calls, ['sessions-refresh', 'show-conversation', 'mark-read', 'snapshot'])
 })
 
-test('client fails explicitly when the patched shell slots are unavailable', () => {
+test('stock rc.8 falls back to the native conversation view without shell slots', async () => {
+  const registrations: Array<{ options: any; component: unknown }> = []
+  const injectedSlots: string[] = []
+  const openedSessions: string[] = []
+  const calls: string[] = []
   const ctx = {
-    slots: { entriesOfSlot: () => { throw new Error('unknown slot') } },
+    effect: () => {},
+    connection: {
+      rpc: {
+        call: async (_channel: string, endpoint: string) => {
+          calls.push(endpoint)
+          if (endpoint === 'snapshot') {
+            return { ok: true, value: { workspaces: [], presets: [], automations: [], runs: [], migration: { detectedDefinitions: 0, detectedRuns: 0, importedDefinitions: 0, importedRuns: 0 }, serverNow: new Date().toISOString() } }
+          }
+          return { ok: true, value: {} }
+        },
+      },
+    },
+    layout: {},
+    sessions: {
+      refresh: async () => { calls.push('sessions-refresh') },
+      open: (sessionId: string) => { openedSessions.push(sessionId) },
+    },
+    locale: {
+      register: () => () => {},
+      bind: () => (key: string) => key,
+    },
+    slots: {
+      inject: (name: string, register: () => void) => { injectedSlots.push(name); register() },
+      register: (options: any, component: unknown) => {
+        registrations.push({ options, component })
+        return () => {}
+      },
+    },
   }
-  assert.throws(
-    () => apply(ctx as never),
-    /DSH_AUTOMATION_INCOMPATIBLE.*shell\.page/,
-  )
+
+  apply(ctx as never)
+  assert.deepEqual(injectedSlots, ['conversation.view'])
+  assert.deepEqual(registrations.map(item => [item.options.name, item.options.id]), [
+    ['conversation.view', 'automation'],
+  ])
+  assert.equal(registrations[0]!.options.label(), 'tab')
+
+  const page = registrations[0]!.options.inject('session-current')
+  await page.openSession('run-1', 'session-result')
+  assert.deepEqual(openedSessions, ['session-result'])
+  assert.deepEqual(calls, ['sessions-refresh', 'mark-read', 'snapshot'])
+})
+
+test('a stock-shaped layout always chooses the declared conversation dependency', () => {
+  const injectedSlots: string[] = []
+  const ctx = {
+    effect: () => {},
+    connection: { rpc: { call: async () => ({ ok: true, value: {} }) } },
+    sessions: { refresh: async () => {}, open: () => {} },
+    locale: { register: () => () => {}, bind: () => (key: string) => key },
+    slots: {
+      inject: (name: string) => { injectedSlots.push(name) },
+    },
+  }
+  apply(ctx as never)
+  assert.deepEqual(injectedSlots, ['conversation.view'])
 })

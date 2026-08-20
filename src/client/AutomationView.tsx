@@ -409,7 +409,7 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
   )
 }
 
-/** Global Automation Center page: all data and effects arrive through the shell.page entry. */
+/** Shared Automation Center view; all data and effects arrive through the selected Surface Adapter. */
 export function AutomationView({
   t, useAutomationState, refresh, createAutomation, updateAutomation, mutateAutomation,
   runNow, markRunRead, cancelRun, openSession,

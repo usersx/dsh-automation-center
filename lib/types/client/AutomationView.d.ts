@@ -9,5 +9,5 @@ export declare function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCan
     onMarkRead: (runId: string) => void;
     onCancel: (runId: string) => void;
 }): JSX.Element;
-/** Global Automation Center page: all data and effects arrive through the shell.page entry. */
+/** Shared Automation Center view; all data and effects arrive through the selected Surface Adapter. */
 export declare function AutomationView({ t, useAutomationState, refresh, createAutomation, updateAutomation, mutateAutomation, runNow, markRunRead, cancelRun, openSession, }: AutomationViewProps): JSX.Element;
