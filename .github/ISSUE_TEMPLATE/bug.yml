@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible Automation Center failure without including secrets.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: 0.1.0-alpha.5
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version and distribution
+      placeholder: 0.1.0-rc.8 stock Web, or patched Desktop build
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface mode
+      options:
+        - Native Shell page
+        - Stock DSH Conversation tab
+        - Unknown / plugin did not load
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized evidence
+      description: Remove tokens, prompts, private paths, environment variables, and credentials from logs or screenshots.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I have removed secrets, API tokens, private prompts, and private absolute paths.
+          required: true
+        - label: I disabled the legacy dsh-automation plugin before testing Automation Center.
+          required: true
