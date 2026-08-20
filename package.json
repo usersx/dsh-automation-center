@@ -1,6 +1,6 @@
 {
   "name": "dsh-automation-center",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "A global Automation Center with fresh, auditable scheduled Agent runs for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
@@ -21,7 +21,7 @@
     "docs",
     "cordis.patch.yml",
     "README.md",
-    "README.zh.md",
+    "README.en.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],
@@ -81,12 +81,20 @@
     "typescript": "^5.9.0"
   },
   "keywords": [
+    "deepseek",
     "deepseek-harness",
     "dsh",
+    "dsh-plugin",
     "automation",
+    "workflow-automation",
     "scheduled-task",
+    "task-scheduler",
+    "ai-agent",
+    "agentic-ai",
     "coding-agent",
-    "review-inbox",
+    "typescript",
+    "react",
+    "desktop",
     "cordis"
   ],
   "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"

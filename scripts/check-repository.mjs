@@ -2,7 +2,7 @@ import { access, readFile } from 'node:fs/promises'
 
 const requiredFiles = [
   'README.md',
-  'README.zh.md',
+  'README.en.md',
   'ROADMAP.md',
   'docs/acceptance-criteria.zh-CN.md',
   'docs/technical-design.zh-CN.md',
