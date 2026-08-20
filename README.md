@@ -17,7 +17,7 @@ DSH Automation Center 是面向 [DeepSeek Harness](https://github.com/usersx/dee
 
 ## 从 npm 安装（推荐）
 
-npm 制品已经准备完成；账号完成 2FA 发布授权后即可用一条命令安装：
+插件已发布到 npm，一条命令安装：
 
 ```sh
 dsh plugin --profile web add dsh-automation-center@latest
