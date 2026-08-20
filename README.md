@@ -53,13 +53,34 @@ A Session-level automation tab creates an information-architecture mismatch: use
 
 ## Screenshots
 
+### 1. Root entry beside New Session
+
+The expanded action uses the same centered shell chrome; the collapsed rail uses the same circular skin.
+
+<p align="center">
+  <img src="docs/assets/sidebar-expanded-fixed.png" alt="Automation action in the expanded sidebar" width="49%">
+  <img src="docs/assets/sidebar-collapsed-fixed.png" alt="Automation action in the collapsed sidebar" width="49%">
+</p>
+
+### 2. Global Automation Center
+
+The action opens a complete cross-workspace page. Current-page semantics do not add a selected paint layer.
+
 ![Automation Center keeps the same skin after selection](docs/assets/desktop-no-active-paint.png)
 
-- [Expanded sidebar](docs/assets/sidebar-expanded-fixed.png)
-- [Collapsed sidebar](docs/assets/sidebar-collapsed-fixed.png)
-- [Create form](docs/assets/create-form.png)
-- [Empty state](docs/assets/automation-center-empty.png)
-- [Result Session title](docs/assets/result-session-title.png)
+### 3. Create an automation
+
+The editor configures the task, workspace, schedule, time zone, Agent preset, permission and timeout, with a next-run preview before save.
+
+![Create automation form](docs/assets/create-form.png)
+
+### 4. Fresh Result Session
+
+Every Run creates an independent Session whose title is the automation task name, while the run list retains its summary and return link.
+
+![Result Session titled from the automation task](docs/assets/result-session-title.png)
+
+An [onboarding empty state](docs/assets/automation-center-empty.png) is shown before the first task is created.
 
 ## Architecture
 

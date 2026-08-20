@@ -53,15 +53,34 @@
 
 ## 界面
 
+### 1. 和“新会话”同级的根入口
+
+展开时两个入口同宽、同皮肤并居中；折叠后仍使用相同的圆形按钮。
+
+<p align="center">
+  <img src="docs/assets/sidebar-expanded-fixed.png" alt="展开侧栏中的自动化入口" width="49%">
+  <img src="docs/assets/sidebar-collapsed-fixed.png" alt="折叠侧栏中的自动化入口" width="49%">
+</p>
+
+### 2. 全局 Automation Center
+
+点击入口后打开跨 Workspace 的完整中央页面。入口只保留当前页语义，不出现额外的选中底色。
+
 ![点击后仍与“新会话”保持同一皮肤的 Automation Center](docs/assets/desktop-no-active-paint.png)
 
-更多实机截图：
+### 3. 创建自动化任务
 
-- [展开侧栏](docs/assets/sidebar-expanded-fixed.png)
-- [折叠侧栏](docs/assets/sidebar-collapsed-fixed.png)
-- [创建表单](docs/assets/create-form.png)
-- [空状态](docs/assets/automation-center-empty.png)
-- [Result Session 使用任务名](docs/assets/result-session-title.png)
+创建流程同时配置任务、Workspace、计划、时区、Agent Preset、权限和超时，并在提交前预览下次运行。
+
+![创建自动化任务表单](docs/assets/create-form.png)
+
+### 4. Fresh Result Session
+
+每个 Run 创建独立 Session；会话标题直接使用任务名，运行记录仍保留摘要和返回入口。
+
+![Result Session 使用自动化任务名](docs/assets/result-session-title.png)
+
+没有任务时会显示[引导空状态](docs/assets/automation-center-empty.png)。
 
 ## 工作原理
 
