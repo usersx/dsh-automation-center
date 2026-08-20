@@ -1,19 +1,93 @@
 {
   "name": "dsh-automation-center",
-  "version": "0.0.0",
-  "private": true,
-  "description": "A global Automation Center for DeepSeek Harness",
+  "version": "0.1.0-alpha.2",
+  "description": "A global Automation Center with fresh, auditable scheduled Agent runs for DeepSeek Harness",
   "type": "module",
-  "scripts": {
-    "check": "node scripts/check-repository.mjs"
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
   },
-  "engines": {
-    "node": "^22.19.0 || >=24.0.0"
-  },
+  "files": [
+    "lib",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/usersx/dsh-automation-center.git"
   },
-  "license": "MIT"
+  "bugs": {
+    "url": "https://github.com/usersx/dsh-automation-center/issues"
+  },
+  "homepage": "https://github.com/usersx/dsh-automation-center#readme",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import ./tests/register-dsh-stubs.mjs --import tsx --test tests/*.test.ts",
+    "check:repo": "node scripts/check-repository.mjs",
+    "check": "pnpm typecheck && pnpm build && pnpm test && pnpm check:repo"
+  },
+  "dependencies": {
+    "luxon": "^3.7.2",
+    "zod": "^4.1.5"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.1",
+    "@types/node": "^22.0.0",
+    "@types/react": "~18.3.1",
+    "esbuild": "^0.25.0",
+    "react": "^18.3.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "automation",
+    "scheduled-task",
+    "coding-agent",
+    "review-inbox",
+    "cordis"
+  ],
+  "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"
 }
-

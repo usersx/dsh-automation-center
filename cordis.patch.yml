@@ -1,0 +1,10 @@
+# One installable bundle row mounts the Host service and publishes its Web client.
+- insert:
+    - id: dsh-automation-center
+      name: 'dsh-automation-center'
+      config:
+        maxConcurrentRuns: 2
+        runTimeoutMinutes: 60
+        misfireGraceMinutes: 15
+        historyLimit: 200
+        archiveRunSessions: false
