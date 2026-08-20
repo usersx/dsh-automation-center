@@ -8,6 +8,7 @@ interface PackageManifest {
   files?: string[]
   peerDependencies?: Record<string, string>
   peerDependenciesMeta?: Record<string, { optional?: boolean }>
+  dependencies?: Record<string, string>
   scripts?: Record<string, string>
   dsh?: {
     bundle?: { patch?: string }
@@ -31,13 +32,16 @@ test('package keeps the installable DSH bundle and Web client contract', async (
     '@deepseek-ai/dsh-client-locale',
     '@deepseek-ai/dsh-client-ui-layout',
     '@deepseek-ai/dsh-client-ui-sidebar',
+    '@deepseek-ai/dsh-client-ui-conversation',
   ])
   assert.deepEqual(manifest.exports?.['./client'], {
     types: './lib/types/client/index.d.ts',
     default: './lib/client.js',
   })
-  assert.ok(manifest.files?.includes('lib'))
+  assert.ok(manifest.files?.includes('lib/*.js'))
+  assert.ok(manifest.files?.includes('lib/types'))
   assert.ok(manifest.files?.includes('cordis.patch.yml'))
+  assert.deepEqual(manifest.dependencies, undefined)
   assert.equal(manifest.scripts?.prepare, undefined)
   assert.equal(manifest.peerDependencies?.react, '^18.2.0')
   assert.deepEqual(manifest.peerDependenciesMeta?.react, { optional: true })
@@ -58,6 +62,10 @@ test('package keeps the installable DSH bundle and Web client contract', async (
   assert.match(clientBundle, /window\.__ModuleLoader__\.load\(/)
   assert.match(clientBundle, /dsh-automation-center-client/)
   assert.match(clientBundle, /sessionArchived/)
+  assert.match(clientBundle, /conversation\.view/)
+  assert.match(clientBundle, /sidebar\.primary\.action/)
   const hostBundle = await readFile(new URL('lib/index.js', root), 'utf8')
   assert.match(hostBundle, /archiveRunSessions: .*\.boolean\(\)\.default\(false\)/)
+  assert.match(hostBundle, /node_modules\/\.pnpm\/luxon@/)
+  assert.match(hostBundle, /node_modules\/\.pnpm\/zod@/)
 })

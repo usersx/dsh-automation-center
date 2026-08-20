@@ -2,18 +2,30 @@
 
 ## 1. 验收范围
 
-目标插件需要在 DSH Web 和 DSH Desktop 中提供全局 Automation Center：
+目标插件需要在 DSH Web 和 DSH Desktop 中提供自动化任务中心，并按 DSH 实际扩展能力选择界面：
 
-- 入口位于左侧栏“新会话”正下方、“工作区”正上方。
-- 与“新会话”同属一级入口。
-- 不依赖当前 Session 或 Workspace。
-- 点击后在中央区域打开 Automation Center。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 通过公开的 `conversation.view` 提供“自动化”标签；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
+- **全局中心模式**：DSH 同时提供 `sidebar.primary.action` 与 `shell.page` 时，提供完整的全局 Automation Center：
+  - 入口位于左侧栏“新会话”正下方、“工作区”正上方；
+  - 与“新会话”同属一级入口；
+  - 不依赖当前 Session 或 Workspace；
+  - 点击后在中央区域打开 Automation Center。
 - 用户可以创建、管理、触发自动化任务。
 - 每次执行创建一个独立 Session，并可从运行记录进入查看。
 - 信息架构参考 Codex、Z Code，任务字段和运行能力可参考现有 DSH Automation 插件。
 - 视觉遵循 DSH 原生设计，不要求像素级复制竞品。
 
-所有 P0 条目全部通过且没有触发一票否决项，才算验收成功。
+原版兼容发布必须通过 A 类、D–S 类中适用的 P0 以及下方 SC 条目；B/C 的根级入口条目属于全局中心模式。宣称“完整全局中心稳定版”时，全部 P0 条目都必须通过且不得触发一票否决项。
+
+### SC. 原版 rc.8 兼容模式
+
+| ID | 验收项 | 通过标准 |
+|---|---|---|
+| SC-01 | 无 Patch 安装 | 未修改的 DSH `0.1.0-rc.8` 可以直接安装并启动，不要求用户替换 DSH 构建 |
+| SC-02 | 原生扩展点 | 使用 `conversation.view` 注册标签，不扫描或修改 DSH DOM |
+| SC-03 | Surface 协商 | `ctx.layout` 提供 Shell 导航能力时选择全局中心；否则注册声明在 Client manifest 中的 Conversation 依赖 |
+| SC-04 | 功能同源 | 两种界面复用同一 AutomationEngine、RPC、数据和任务行为，不形成两套调度器 |
+| SC-05 | 明确边界 | README 明确说明原版 rc.8 需进入 Session 才能看到标签，不能把它描述为全局根入口 |
 
 ## 2. P0 功能验收
 
@@ -25,7 +37,7 @@
 | A-02 | Desktop 生效 | 安装到 Desktop Profile 后，完整重启一次即可生效 |
 | A-03 | Web 生效 | 对应 Profile 的 DSH Web 页面中可以看到插件 |
 | A-04 | 冷启动稳定 | 连续启动 DSH Desktop 3 次，不闪退、不白屏 |
-| A-05 | 缺少扩展点 | DSH 不支持 `shell.page` 时显示明确兼容性错误，不静默失效 |
+| A-05 | 缺少扩展点 | DSH 不支持 Shell Slot 时自动降级；若目标连 manifest 声明的 Conversation 包都无法解析，则由 DSH Loader 明确报告依赖错误 |
 | A-06 | 卸载 | 卸载并重启后入口和页面消失，DSH 其他功能正常 |
 | A-07 | 插件冲突 | 旧 `dsh-automation` 同时启用时明确提示冲突，不启动第二套调度器 |
 
@@ -171,7 +183,7 @@ DeepSeek Harness
 
 ## 7. 一票否决项
 
-出现以下任意情况，MVP 直接判定失败：
+全局中心模式出现以下任意情况，MVP 直接判定失败：
 
 - 入口不在“新会话”下方、“工作区”上方。
 - 必须先进入 Session 才能看到入口。
@@ -186,9 +198,12 @@ DeepSeek Harness
 - 旧插件冲突时静默启动两套调度器。
 - 日志或 UI 泄露 Token、环境变量等凭证。
 
+原版兼容模式另有三项一票否决：要求用户安装 Shell Page Patch、通过 DOM 注入伪造根入口、或者在 README 中把 Session 标签描述成全局入口。
+
 最终结论只有：
 
 ```text
-PASS：全部 P0 条目通过，且没有一票否决项。
-FAIL：任意 P0 条目失败，或触发任意一票否决项。
+PASS（Stock Compatible）：SC、A 及适用功能条目通过，且没有触发原版兼容模式一票否决项。
+PASS（Global Center）：全部 P0 条目通过，且没有触发任意一票否决项。
+FAIL：对应发布声明中的任意 P0 条目失败，或触发任意一票否决项。
 ```

@@ -3,6 +3,7 @@ const STYLE_ID = 'dsh-automation-styles'
 const CSS_TEXT = String.raw`
 .dsh-automation-shell,.dsh-automation-shell *{box-sizing:border-box}
 .dsh-automation-shell{width:100%;height:100%;min-height:0;overflow:auto;overscroll-behavior:contain;padding:28px clamp(20px,3vw,48px) calc(var(--dsh-composer-height,152px) + 36px);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family,system-ui);scrollbar-gutter:stable}
+.dsh-automation-conversation-surface{width:100%;height:100%;min-height:0}
 .dsh-automation-header{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;max-width:1440px;margin:0 auto 18px}
 .dsh-automation-heading{display:flex;min-width:0;align-items:flex-start;gap:14px}.dsh-automation-heading h1{margin:1px 0 3px;font-size:25px;line-height:31px;letter-spacing:-.025em}.dsh-automation-heading p{margin:0;color:var(--dsw-alias-label-secondary);font-size:13px;line-height:20px}
 .dsh-automation-logo{display:inline-flex;width:44px;height:44px;flex:none;align-items:center;justify-content:center;border:1px solid color-mix(in srgb,var(--dsw-alias-state-business-primary) 25%,var(--dsw-alias-border-l2));border-radius:14px;background:color-mix(in srgb,var(--dsw-alias-state-business-tertiary) 76%,var(--dsw-alias-bg-base));box-shadow:var(--dsw-shadow-lv1);color:var(--dsw-alias-state-business-primary)}.dsh-automation-logo svg{width:23px;height:23px}
@@ -42,6 +43,7 @@ const CSS_TEXT = String.raw`
 .dsh-automation-field select{width:100%;min-width:0;height:36px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;outline:none;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:12px/18px var(--dsw-font-family,system-ui)}.dsh-automation-field select:focus{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent)}
 .dsh-automation-shell{padding-bottom:36px}
 @media(max-width:760px){.dsh-automation-shell{padding-bottom:24px}}
+.dsh-automation-conversation-surface .dsh-automation-shell{padding-bottom:calc(var(--dsh-composer-height,152px) + 36px)}
 `
 
 /** Install namespaced token-only styles and remove them when the plugin unloads. */

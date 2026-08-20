@@ -43,20 +43,26 @@ export interface AutomationSidebarActionProps {
 export interface ClientRpc {
     call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<unknown>;
 }
-interface RegistrationOptions {
-    readonly name: 'shell.page' | 'sidebar.primary.action';
+interface BaseRegistrationOptions {
     readonly id: string;
     readonly order: number;
     readonly locale: string;
-    readonly inject: () => Record<string, unknown>;
 }
+type RegistrationOptions = (BaseRegistrationOptions & {
+    readonly name: 'shell.page' | 'sidebar.primary.action';
+    readonly inject: () => Record<string, unknown>;
+}) | (BaseRegistrationOptions & {
+    readonly name: 'conversation.view';
+    readonly label: () => string;
+    readonly inject: (sessionId: string) => Record<string, unknown>;
+});
 export interface ClientContext {
     effect(factory: () => void | (() => void), label?: string): void;
     connection: {
         readonly rpc: ClientRpc;
     };
-    layout: {
-        readonly surface: {
+    layout?: {
+        readonly surface?: {
             getSnapshot(): {
                 kind: 'conversation';
             } | {
@@ -65,8 +71,8 @@ export interface ClientContext {
             };
             subscribe(listener: () => void): () => void;
         };
-        openPage(pageId: string): void;
-        showConversation(): void;
+        openPage?(pageId: string): void;
+        showConversation?(): void;
     };
     sessions: {
         refresh(): Promise<void>;
@@ -81,7 +87,7 @@ export interface ClientContext {
     };
     slots: {
         entriesOfSlot(name: string): readonly unknown[];
-        inject(name: 'shell.page' | 'sidebar.primary.action', register: () => void | (() => void)): void;
+        inject(name: 'shell.page' | 'sidebar.primary.action' | 'conversation.view', register: () => void | (() => void)): void;
         register(options: RegistrationOptions, component: ComponentType<any>): () => void;
     };
 }

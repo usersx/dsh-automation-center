@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck, build, test, and validate repository
+        run: pnpm check
+
+  stock-rc8-install:
+    name: Install into stock DSH rc.8
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out plugin
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: plugin
+      - name: Check out unmodified DeepSeek Harness rc.8
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.1.0-rc.8
+          path: deepseek-harness
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.32.1
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+          cache-dependency-path: |
+            plugin/pnpm-lock.yaml
+            deepseek-harness/pnpm-lock.yaml
+      - name: Build and pack plugin
+        working-directory: plugin
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          mkdir -p ../dist
+          npm pack --pack-destination ../dist
+          mv ../dist/dsh-automation-center-*.tgz ../dist/dsh-automation-center.tgz
+      - name: Install stock DSH dependencies
+        working-directory: deepseek-harness
+        run: pnpm install --frozen-lockfile
+      - name: Install plugin into an isolated stock rc.8 Web profile
+        working-directory: deepseek-harness
+        env:
+          DSH_HOME: ${{ runner.temp }}/dsh-stock-home
+        run: pnpm dsh plugin --profile web add ../dist/dsh-automation-center.tgz
+      - name: Verify the installed bundle enters the profile composition
+        working-directory: deepseek-harness
+        env:
+          DSH_HOME: ${{ runner.temp }}/dsh-stock-home
+        run: |
+          pnpm dsh web --dump-config > "${RUNNER_TEMP}/dsh-stock-config.txt"
+          grep -F "dsh-automation-center" "${RUNNER_TEMP}/dsh-stock-config.txt"
+          node -e "const p=require(process.env.DSH_HOME + '/profiles/web/node_modules/dsh-automation-center/package.json'); if (!p.dsh?.client?.inject?.includes('@deepseek-ai/dsh-client-ui-conversation')) process.exit(1)"

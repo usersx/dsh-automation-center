@@ -5,6 +5,7 @@ import test from 'node:test'
 const viewSource = readFileSync(new URL('../src/client/AutomationView.tsx', import.meta.url), 'utf8')
 const styleSource = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 const sidebarActionSource = readFileSync(new URL('../src/client/AutomationSidebarAction.tsx', import.meta.url), 'utf8')
+const surfaceSource = readFileSync(new URL('../src/client/surface.tsx', import.meta.url), 'utf8')
 
 test('every Automation view state is a standalone shell page, not a conversation overlay', () => {
   const roots = viewSource.match(/data-conversation-composer-overlay=""/g) ?? []
@@ -23,4 +24,14 @@ test('every Automation view state is a standalone shell page, not a conversation
   )
   assert.match(sidebarActionSource, /renderAction\(\{/)
   assert.match(sidebarActionSource, /DSH_AUTOMATION_INCOMPATIBLE/)
+})
+
+test('stock DSH conversation fallback opts into the native composer overlay contract', () => {
+  assert.match(surfaceSource, /data-conversation-composer-overlay/)
+  assert.match(styleSource, /\.dsh-automation-conversation-surface\{[^}]*height:100%/)
+  assert.match(
+    styleSource,
+    /\.dsh-automation-conversation-surface \.dsh-automation-shell\{padding-bottom:calc\(var\(--dsh-composer-height,152px\) \+ 36px\)\}/,
+    'the stock Session composer must not cover Automation actions',
+  )
 })

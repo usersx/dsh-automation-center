@@ -1,6 +1,6 @@
 {
   "name": "dsh-automation-center",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "A global Automation Center with fresh, auditable scheduled Agent runs for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",
@@ -17,12 +17,14 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib",
-    "docs",
+    "lib/*.js",
+    "lib/types",
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
+    "CHANGELOG.md",
     "LICENSE",
+    "SECURITY.md",
     "THIRD_PARTY_NOTICES.md"
   ],
   "license": "MIT",
@@ -48,7 +50,8 @@
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-sidebar"
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
   },
@@ -58,10 +61,6 @@
     "test": "node --import ./tests/register-dsh-stubs.mjs --import tsx --test tests/*.test.ts",
     "check:repo": "node scripts/check-repository.mjs",
     "check": "pnpm typecheck && pnpm build && pnpm test && pnpm check:repo"
-  },
-  "dependencies": {
-    "luxon": "^3.7.2",
-    "zod": "^4.1.5"
   },
   "peerDependencies": {
     "react": "^18.2.0"
@@ -76,9 +75,11 @@
     "@types/node": "^22.0.0",
     "@types/react": "~18.3.1",
     "esbuild": "^0.25.0",
+    "luxon": "^3.7.2",
     "react": "^18.3.1",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "zod": "^4.1.5"
   },
   "keywords": [
     "deepseek",
