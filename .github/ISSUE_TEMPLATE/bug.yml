@@ -1,59 +1,138 @@
-name: Bug report
-description: Report a reproducible Automation Center failure without including secrets.
+name: Bug report / 缺陷报告
+description: Report a reproducible Automation Center failure without secrets. 提交可复现且已脱敏的问题。
 title: "[Bug] "
 labels:
   - bug
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please use the original DeepSeek skin when possible and remove prompts, credentials, private paths, and Workspace content from all evidence.
+
+        感谢反馈。请尽量使用原版 DeepSeek 皮肤，并从日志、截图中移除 Prompt、凭证、私密路径和 Workspace 内容。
   - type: input
     id: plugin-version
     attributes:
-      label: Plugin version
-      placeholder: 0.1.0-alpha.5
+      label: Plugin version / 插件版本
+      description: Use the exact installed version, not only `latest`. / 请填写实际安装版本，而不是只写 latest。
+      placeholder: 0.1.0-alpha.4
+    validations:
+      required: true
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: Installation source / 安装来源
+      options:
+        - npm fixed version / npm 固定版本
+        - npm latest
+        - GitHub Release .tgz
+        - Local npm pack / 本地打包
+        - Source or link install / 源码或 link 安装
+        - Unknown / 不确定
     validations:
       required: true
   - type: input
     id: dsh-version
     attributes:
-      label: DSH version and distribution
-      placeholder: 0.1.0-rc.8 stock Web, or patched Desktop build
+      label: DSH version and distribution / DSH 版本与分发
+      placeholder: 0.1.0-rc.8 stock Web, or Desktop 2.x
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime environment / 运行环境
+      description: Include OS, architecture, Node.js, pnpm, and profile name. / 请包含操作系统、架构、Node.js、pnpm 和 Profile 名称。
+      placeholder: macOS 15 arm64; Node 22.19.0; pnpm 10.32.1; profile web
     validations:
       required: true
   - type: dropdown
     id: surface
     attributes:
-      label: Surface mode
+      label: Surface mode / 界面模式
       options:
-        - Native Shell page
-        - Stock DSH Conversation tab
-        - Unknown / plugin did not load
+        - Stock DSH Conversation tab / 原版会话标签
+        - Global Shell page / 全局中心页面
+        - Unknown or plugin did not load / 未知或插件未加载
     validations:
       required: true
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: Workspace state / Workspace 状态
+      options:
+        - Workspace present / 已添加 Workspace
+        - No Workspace / 无 Workspace
+        - Unknown / 不确定
+    validations:
+      required: true
+  - type: dropdown
+    id: legacy-plugin
+    attributes:
+      label: Legacy automation plugin / 旧版自动化插件
+      description: Report the state of `@dsh-external/dsh-automation`. / 请说明旧插件状态。
+      options:
+        - Not installed or removed / 未安装或已移除
+        - Installed but disabled / 已安装但已禁用
+        - Installed and enabled / 已安装且启用
+        - Unknown / 不确定
+    validations:
+      required: true
+  - type: input
+    id: regression
+    attributes:
+      label: Last known working version / 最后正常版本
+      description: Leave blank if this never worked or is unknown. / 从未正常或不确定时可留空。
+      placeholder: 0.1.0-alpha.3
   - type: textarea
     id: reproduction
     attributes:
-      label: Reproduction steps
-      description: Include the smallest sequence that reproduces the problem.
+      label: Reproduction steps / 复现步骤
+      description: Include the smallest deterministic sequence. Do not paste the task prompt. / 提供最小确定性步骤，不要粘贴任务 Prompt。
+      placeholder: |
+        1. Start DSH with profile ...
+        2. Open Automation ...
+        3. Create or run ...
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: Expected behavior / 预期行为
     validations:
       required: true
   - type: textarea
     id: actual
     attributes:
-      label: Actual behavior and sanitized evidence
-      description: Remove tokens, prompts, private paths, environment variables, and credentials from logs or screenshots.
+      label: Actual behavior / 实际行为
+      description: State whether the Host crashed, the UI failed, or the Result Session contains a structured failure. / 请区分 Host 崩溃、UI 失败和 Result Session 结构化失败。
     validations:
       required: true
+  - type: textarea
+    id: automation-settings
+    attributes:
+      label: Sanitized automation settings / 脱敏后的自动化设置
+      description: Trigger type, timezone, timeout, and permission preset only. Never include the prompt. / 仅提供触发类型、时区、超时和权限预设，禁止包含 Prompt。
+      placeholder: Daily; Asia/Shanghai; timeout 60 min; Standard preset
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics / 脱敏诊断信息
+      description: Add relevant console, Host, or Session errors after replacing private values with `<redacted>`, `<workspace>`, and `<home>`.
+      render: shell
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / 截图
+      description: Drag screenshots here. Prefer the original DeepSeek skin and remove private session/workspace data. / 优先使用原版皮肤并移除私密会话与 Workspace 数据。
   - type: checkboxes
     id: safety
     attributes:
-      label: Safety check
+      label: Safety and isolation checks / 安全与隔离检查
       options:
-        - label: I have removed secrets, API tokens, private prompts, and private absolute paths.
+        - label: I removed secrets, API tokens, cookies, private prompts, Workspace content, and private absolute paths. / 我已移除凭证、Prompt、Workspace 内容和私密绝对路径。
           required: true
-        - label: I disabled the legacy dsh-automation plugin before testing Automation Center.
+        - label: I tested with the original DeepSeek skin or explained why the problem is skin-specific. / 我已使用原版皮肤验证，或说明了皮肤相关性。
+          required: true
+        - label: I disabled the legacy `@dsh-external/dsh-automation` plugin, or explicitly reported that it remains enabled. / 我已禁用旧插件，或明确报告它仍处于启用状态。
           required: true

@@ -136,7 +136,7 @@ CI runs typecheck, tests, build and repository validation on Linux, macOS and Wi
 - [Technical design (Chinese)](https://github.com/usersx/dsh-automation-center/blob/main/docs/technical-design.zh-CN.md)
 - [Release process](https://github.com/usersx/dsh-automation-center/blob/main/docs/releasing.md)
 - [Changelog](CHANGELOG.md)
-- [Contributing](CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.en.md)
 - [Security policy](SECURITY.md)
 - [Roadmap](ROADMAP.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
