@@ -2,6 +2,13 @@
 
 All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and use semantic versioning.
 
+## [Unreleased]
+
+### Changed
+
+- Expanded the bilingual contribution workflow with reproducibility, isolated-profile verification, evidence, and data-safety requirements.
+- Expanded the Bug form to capture installation source, runtime, Surface, Workspace, legacy-plugin, regression, and sanitized diagnostic context.
+
 ## [0.1.0-alpha.5] - 2026-08-20
 
 ### Added
@@ -40,6 +47,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - First npm pre-release of the global Automation Center and fresh-session execution engine.
 
+[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.5...HEAD
 [0.1.0-alpha.5]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/usersx/dsh-automation-center/releases/tag/v0.1.0-alpha.3
