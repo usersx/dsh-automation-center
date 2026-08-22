@@ -10,7 +10,7 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import type { AutomationDefinition, AutomationRun } from './types.ts'
+import type { AutomationDefinition, AutomationRun, AutomationRunPhase } from './types.ts'
 
 interface TextBlock { readonly type: string; readonly text?: string }
 interface SessionEventLike {
@@ -46,12 +46,34 @@ export interface RunCompletion {
   readonly status: 'succeeded' | 'failed' | 'cancelled'
   readonly summary?: string
   readonly error?: { readonly code: string; readonly message: string }
+  readonly effectiveModel?: {
+    readonly provider: string
+    readonly model: string
+    readonly reasoningEffort?: string
+  }
 }
 
 export interface ExecutorConfig {
   readonly runTimeoutMs: number
   readonly sessionId: string
   readonly signal?: AbortSignal
+  readonly onPhase?: (phase: Extract<AutomationRunPhase, 'executing' | 'settling'>, sideEffectsPossible: true) => Promise<void>
+}
+
+function abortCode(signal?: AbortSignal): string | undefined {
+  if (signal?.aborted !== true) return undefined
+  const reason = signal.reason
+  return typeof reason === 'object' && reason !== null && 'code' in reason
+    ? String((reason as { readonly code: unknown }).code)
+    : 'cancelled'
+}
+
+function abortedCompletion(signal?: AbortSignal): RunCompletion | undefined {
+  const code = abortCode(signal)
+  if (code === undefined) return undefined
+  return code === 'run_timeout'
+    ? { status: 'failed', error: { code, message: 'The automation exceeded its whole-job time limit.' } }
+    : { status: 'cancelled', error: { code: 'cancelled', message: 'The automation was cancelled before it started.' } }
 }
 
 /** Last assistant text and closed-turn reason for the interval owned by this run. */
@@ -120,25 +142,32 @@ export async function executeAutomationRun(
   run: AutomationRun,
   config: ExecutorConfig,
 ): Promise<RunCompletion> {
-  if (config.signal?.aborted === true) {
-    return { status: 'cancelled', error: { code: 'cancelled', message: 'The automation was cancelled before it started.' } }
-  }
+  const alreadyAborted = abortedCompletion(config.signal)
+  if (alreadyAborted !== undefined) return alreadyAborted
   const target = run.targetSnapshot
+  const fallbackSelection = ctx.agentDefaultModel.currentSelection()
+  const selection: ModelSelection = target.modelPolicy.mode === 'pinned'
+    ? {
+        provider: target.modelPolicy.provider,
+        model: target.modelPolicy.model,
+        ...(target.modelPolicy.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: target.modelPolicy.reasoningEffort as ModelSelection['reasoningEffort'] }),
+      }
+    : fallbackSelection
+  const effectiveModel = {
+    provider: selection.provider,
+    model: selection.model,
+    ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: String(selection.reasoningEffort) }),
+  }
   const workspace = ctx.workspaceRegistry.get(WorkspaceId(target.workspaceId))
   if (workspace === undefined) {
-    return { status: 'failed', error: { code: 'workspace_not_found', message: 'The target workspace no longer exists.' } }
+    return { status: 'failed', effectiveModel, error: { code: 'workspace_not_found', message: 'The target workspace no longer exists.' } }
   }
   if (await workspace.status() !== 'ok' || workspace.path !== target.cwd) {
-    return { status: 'failed', error: { code: 'workspace_unavailable', message: 'The target workspace directory is unavailable or changed.' } }
+    return { status: 'failed', effectiveModel, error: { code: 'workspace_unavailable', message: 'The target workspace directory is unavailable or changed.' } }
   }
 
-  const fallbackSelection = ctx.agentDefaultModel.currentSelection()
-  // A definition either pins the complete provider/model pair captured from
-  // the source Agent, or follows the live default as one coherent selection.
-  // Do not combine the default model's reasoning effort with another model.
-  const selection: ModelSelection = target.provider !== null && target.model !== null
-    ? { provider: target.provider, model: target.model }
-    : fallbackSelection
   const sessionId = SessionId(config.sessionId)
   let handle: Awaited<ReturnType<Context['agents']['create']>> | undefined
   let timeout: ReturnType<typeof setTimeout> | undefined
@@ -166,6 +195,7 @@ export async function executeAutomationRun(
     ctx.sessionTitle.rename(handle.agent.session, definition.name)
     await workspace.attachSession(sessionId)
     const firstSeq = handle.agent.session.seq
+    await config.onPhase?.('executing', true)
     handle.agent.followup(createUserMessage({
       content: [{ type: 'text', text: run.promptSnapshot }],
       source: {
@@ -189,8 +219,9 @@ export async function executeAutomationRun(
     const cancellation = new Promise<void>((resolve) => {
       if (config.signal === undefined) return
       const cancel = () => {
-        aborted = true
-        handle?.agent.cancel({ kind: 'hook', reason: 'automation service disposed' })
+        if (abortCode(config.signal) === 'run_timeout') timedOut = true
+        else aborted = true
+        handle?.agent.cancel({ kind: 'hook', reason: timedOut ? 'automation run timeout' : 'automation service disposed' })
         resolve()
       }
       if (config.signal.aborted) cancel()
@@ -200,6 +231,7 @@ export async function executeAutomationRun(
       }
     })
     await Promise.race([idle, deadline, cancellation])
+    await config.onPhase?.('settling', true)
     removeCancellationListener()
     if (timedOut || aborted) await handle.agent.whenIdle()
     if (timeout !== undefined) clearTimeout(timeout)
@@ -210,6 +242,7 @@ export async function executeAutomationRun(
       return {
         sessionId: String(sessionId),
         status: 'cancelled',
+        effectiveModel,
         ...(summary === undefined ? {} : { summary }),
         error: { code: 'cancelled', message: 'The automation was cancelled because its owner stopped.' },
       }
@@ -218,23 +251,34 @@ export async function executeAutomationRun(
       return {
         sessionId: String(sessionId),
         status: 'failed',
+        effectiveModel,
         ...(summary === undefined ? {} : { summary }),
         error: { code: 'run_timeout', message: 'The automation exceeded its run time limit.' },
       }
     }
     if (outcome.reason?.kind === 'completed') {
-      return { sessionId: String(sessionId), status: 'succeeded', ...(summary === undefined ? {} : { summary }) }
+      return { sessionId: String(sessionId), status: 'succeeded', effectiveModel, ...(summary === undefined ? {} : { summary }) }
     }
     return {
       sessionId: String(sessionId),
       status: 'failed',
+      effectiveModel,
       ...(summary === undefined ? {} : { summary }),
       error: reasonError(outcome.reason),
     }
   } catch (error: unknown) {
+    const cancelled = abortedCompletion(config.signal)
+    if (cancelled !== undefined) {
+      return {
+        ...cancelled,
+        ...(handle === undefined ? {} : { sessionId: String(sessionId) }),
+        effectiveModel,
+      }
+    }
     return {
       ...(handle === undefined ? {} : { sessionId: String(sessionId) }),
       status: 'failed',
+      effectiveModel,
       error: classifyExecutorError(error),
     }
   } finally {

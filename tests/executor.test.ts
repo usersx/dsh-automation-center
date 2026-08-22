@@ -21,7 +21,12 @@ class TrackingAbortSignal {
   }
 }
 
-function executorFixture(options: { readonly hangUntilCancelled?: boolean } = {}) {
+function executorFixture(options: {
+  readonly hangUntilCancelled?: boolean
+  readonly modelPolicy?: { readonly mode: 'inherit' } | {
+    readonly mode: 'pinned'; readonly provider: string; readonly model: string; readonly reasoningEffort?: string
+  }
+} = {}) {
   const definition = createDefinition({
     id: 'automation-executor',
     name: 'Executor test',
@@ -30,6 +35,7 @@ function executorFixture(options: { readonly hangUntilCancelled?: boolean } = {}
     workspaceId: 'workspace-1',
     cwd: '/workspace/repo',
     agentPreset: 'standard',
+    ...(options.modelPolicy === undefined ? {} : { modelPolicy: options.modelPolicy }),
     createdBy: { kind: 'web', sessionId: 'session-source' },
     now: '2026-08-13T00:00:00Z',
   })
@@ -70,7 +76,7 @@ function executorFixture(options: { readonly hangUntilCancelled?: boolean } = {}
   }
   const ctx = {
     workspaceRegistry: { get: () => workspace },
-    agentDefaultModel: { currentSelection: () => ({ provider: 'provider', model: 'model' }) },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'provider', model: 'model', reasoningEffort: 'high' }) },
     agentPresets: { mount: async () => {} },
     agents: {
       withoutInitiator: (operation: () => unknown) => operation(),
@@ -123,9 +129,29 @@ test('executor removes its abort listener after a normally completed run', async
   )
 
   assert.equal(completion.status, 'succeeded')
+  assert.deepEqual(completion.effectiveModel, { provider: 'provider', model: 'model', reasoningEffort: 'high' })
   assert.equal(signal.added, 1)
   assert.equal(signal.removed, 1)
   assert.equal(signal.listeners.size, 0)
+})
+
+test('executor honors a complete pinned model policy instead of the live default', async () => {
+  const fixture = executorFixture({
+    modelPolicy: {
+      mode: 'pinned', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'low',
+    },
+  })
+  const completion = await executeAutomationRun(
+    fixture.ctx as never,
+    fixture.definition,
+    fixture.run,
+    { runTimeoutMs: 1_000, sessionId: 'dsh-automation-session-pinned' },
+  )
+
+  assert.equal(completion.status, 'succeeded')
+  assert.deepEqual(completion.effectiveModel, {
+    provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'low',
+  })
 })
 
 test('executor pins the fresh Result Session to the automation task name before prompting', async () => {
@@ -163,6 +189,21 @@ test('executor timeout cancels a stuck Agent, settles, and removes its abort lis
   assert.equal(signal.added, 1)
   assert.equal(signal.removed, 1)
   assert.equal(signal.listeners.size, 0)
+})
+
+test('executor preserves a whole-job timeout that fires before Agent setup', async () => {
+  const fixture = executorFixture()
+  const controller = new AbortController()
+  controller.abort({ code: 'run_timeout' })
+  const completion = await executeAutomationRun(
+    fixture.ctx as never,
+    fixture.definition,
+    fixture.run,
+    { runTimeoutMs: 1_000, sessionId: 'dsh-automation-session-preflight-timeout', signal: controller.signal },
+  )
+
+  assert.equal(completion.status, 'failed')
+  assert.equal(completion.error?.code, 'run_timeout')
 })
 
 test('executor setup failures retain an actionable error classification', () => {

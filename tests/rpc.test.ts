@@ -12,6 +12,8 @@ test('snapshot marks archived run Sessions so the client never offers a broken o
       generatedAt: '2026-08-17T00:00:00.000Z',
       workspaces: [{ id: 'workspace-1', title: 'Repository', path: '/workspace/repo' }],
       presets: [{ id: 'standard', name: 'Standard', broken: false }],
+      defaultModel: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: null },
+      models: [{ provider: 'deepseek', providerName: 'DeepSeek', model: 'deepseek-chat', modelName: 'DeepSeek Chat', reasoningEfforts: [] }],
       migration: { detectedDefinitions: 0, detectedRuns: 0, importedDefinitions: 0, importedRuns: 0 },
       definitions: [],
       runs: [{
@@ -38,6 +40,8 @@ test('snapshot marks archived run Sessions so the client never offers a broken o
       filterWorkspaceId: undefined,
       workspaces: [{ id: 'workspace-1', title: 'Repository', path: '/workspace/repo' }],
       presets: [{ id: 'standard', name: 'Standard', broken: false }],
+      defaultModel: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: null },
+      models: [{ provider: 'deepseek', providerName: 'DeepSeek', model: 'deepseek-chat', modelName: 'DeepSeek Chat', reasoningEfforts: [] }],
       migration: { detectedDefinitions: 0, detectedRuns: 0, importedDefinitions: 0, importedRuns: 0 },
       automations: [],
       runs: [{
@@ -71,11 +75,15 @@ test('mark-read RPC is loopback-only and propagates scoped service calls and can
       },
     },
   }
-  const calls: Array<{ scope: unknown; runId: string; signal: AbortSignal | undefined }> = []
+  const calls: Array<{ scope: unknown; command: unknown; signal: AbortSignal | undefined }> = []
+  const receipt = {
+    requestId: 'request-mark-read', command: 'mark-read', outcome: 'committed',
+    entityId: 'run-deleted-definition', revision: null, appliedAt: '2026-08-17T00:00:00.000Z', replayed: false,
+  }
   const service = {
-    markRead: async (scope: unknown, runId: string, signal?: AbortSignal) => {
-      calls.push({ scope, runId, signal })
-      return { id: runId, unread: false }
+    dispatch: async (scope: unknown, command: unknown, signal?: AbortSignal) => {
+      calls.push({ scope, command, signal })
+      return receipt
     },
   }
   const remove = registerAutomationRpc(ctx, service as never)
@@ -84,14 +92,12 @@ test('mark-read RPC is loopback-only and propagates scoped service calls and can
   const response = await handler?.('mark-read', {
     workspaceId: 'workspace-1',
     runId: 'run-deleted-definition',
+    clientRequestId: 'request-mark-read',
   }, controller.signal)
-  assert.deepEqual(response, {
-    ok: true,
-    value: { runId: 'run-deleted-definition', unread: false },
-  })
+  assert.deepEqual(response, { ok: true, value: receipt })
   assert.deepEqual(calls, [{
     scope: { workspaceId: 'workspace-1', creatorKind: 'web' },
-    runId: 'run-deleted-definition',
+    command: { kind: 'mark-read', requestId: 'request-mark-read', runId: 'run-deleted-definition' },
     signal: controller.signal,
   }])
 
@@ -99,6 +105,7 @@ test('mark-read RPC is loopback-only and propagates scoped service calls and can
   const cancelled = await handler?.('mark-read', {
     workspaceId: 'workspace-1',
     runId: 'run-not-admitted',
+    clientRequestId: 'request-cancelled',
   }, controller.signal)
   assert.deepEqual(cancelled, {
     ok: false,
@@ -138,14 +145,17 @@ test('RPC schedule inputs are strict JSON contracts and do not coerce strings or
 
 test('update RPC replaces editable fields behind an expected revision guard', async () => {
   let handler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined
-  const calls: Array<{ scope: unknown; id: string; input: unknown; signal: AbortSignal | undefined }> = []
+  const calls: Array<{ scope: unknown; command: unknown; signal: AbortSignal | undefined }> = []
   const ctx = {
     connection: { rpc: { handle: (_channel: string, value: typeof handler) => { handler = value; return async () => {} } } },
   }
   const service = {
-    update: async (scope: unknown, id: string, input: unknown, signal?: AbortSignal) => {
-      calls.push({ scope, id, input, signal })
-      return { id, revision: 4 }
+    dispatch: async (scope: unknown, command: unknown, signal?: AbortSignal) => {
+      calls.push({ scope, command, signal })
+      return {
+        requestId: 'request-edit', command: 'update', outcome: 'committed', entityId: 'automation-edit',
+        revision: 4, appliedAt: '2026-08-17T00:00:00.000Z', replayed: false,
+      }
     },
   }
   registerAutomationRpc(ctx as never, service as never)
@@ -153,6 +163,7 @@ test('update RPC replaces editable fields behind an expected revision guard', as
   const response = await handler?.('update', {
     workspaceId: 'workspace-1',
     automationId: 'automation-edit',
+    clientRequestId: 'request-edit',
     expectedRevision: 3,
     input: {
       name: 'Edited task',
@@ -160,19 +171,26 @@ test('update RPC replaces editable fields behind an expected revision guard', as
       schedule: { kind: 'weekly', time: '09:15', weekdays: [1, 5] },
       timeZone: 'Asia/Shanghai',
       permission: 'workspace-write',
+      modelPolicy: { mode: 'pinned', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' },
     },
   }, signal)
 
-  assert.deepEqual(response, { ok: true, value: { id: 'automation-edit', revision: 4 } })
+  assert.deepEqual(response, { ok: true, value: {
+    requestId: 'request-edit', command: 'update', outcome: 'committed', entityId: 'automation-edit',
+    revision: 4, appliedAt: '2026-08-17T00:00:00.000Z', replayed: false,
+  } })
   assert.deepEqual(calls, [{
     scope: { workspaceId: 'workspace-1', creatorKind: 'web' },
-    id: 'automation-edit',
-    input: {
-      expectedRevision: 3,
-      name: 'Edited task',
-      prompt: 'The complete edited prompt.',
-      schedule: { kind: 'weekly', time: '09:15', weekdays: ['MO', 'FR'], timeZone: 'Asia/Shanghai' },
-      permissionPreset: 'workspace-write',
+    command: {
+      kind: 'update', requestId: 'request-edit', automationId: 'automation-edit',
+      input: {
+        expectedRevision: 3,
+        name: 'Edited task',
+        prompt: 'The complete edited prompt.',
+        schedule: { kind: 'weekly', time: '09:15', weekdays: ['MO', 'FR'], timeZone: 'Asia/Shanghai' },
+        permissionPreset: 'workspace-write',
+        modelPolicy: { mode: 'pinned', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high' },
+      },
     },
     signal,
   }])

@@ -6,6 +6,7 @@ import type { LegacyDefinition, LegacyRun } from '../src/legacy.ts'
 import type { AutomationDefinition, AutomationRun } from '../src/types.ts'
 
 class MemoryTable<Value> {
+  readonly writes: Value[] = []
   constructor(
     readonly records = new Map<string, Value>(),
     private readonly writable: () => boolean = () => true,
@@ -17,6 +18,7 @@ class MemoryTable<Value> {
   async put(key: string, value: Value): Promise<void> {
     if (!this.writable()) throw new Error('domain is closed')
     this.records.set(key, value)
+    this.writes.push(value)
   }
   async delete(key: string): Promise<boolean> {
     if (!this.writable()) throw new Error('domain is closed')
@@ -35,6 +37,7 @@ class MemoryTable<Value> {
 class MemoryDomain {
   readonly definitions: MemoryTable<AutomationDefinition>
   readonly runs: MemoryTable<AutomationRun>
+  readonly receipts = new MemoryTable<unknown>()
   closed = false
   constructor(
     definitions: readonly AutomationDefinition[] = [],
@@ -44,8 +47,8 @@ class MemoryDomain {
     this.definitions = new MemoryTable(new Map(definitions.map(value => [value.id, value])), writable)
     this.runs = new MemoryTable(new Map(runs.map(value => [value.id, value])), writable)
   }
-  table(name: 'definitions' | 'runs'): MemoryTable<AutomationDefinition> | MemoryTable<AutomationRun> {
-    return name === 'definitions' ? this.definitions : this.runs
+  table(name: 'definitions' | 'runs' | 'receipts'): MemoryTable<AutomationDefinition> | MemoryTable<AutomationRun> | MemoryTable<unknown> {
+    return name === 'definitions' ? this.definitions : name === 'runs' ? this.runs : this.receipts
   }
   async close(): Promise<void> { this.closed = true }
 }
@@ -80,6 +83,8 @@ async function harness(seed?: {
   readonly config?: Partial<AutomationConfig>
   readonly completeRuns?: boolean
   readonly rejectArchive?: boolean
+  readonly unavailableModel?: string
+  readonly resolveModelGate?: Promise<void>
   readonly resolveWorkspaceGate?: Promise<void>
   readonly onResolveWorkspace?: () => void
   readonly legacyDefinitions?: readonly LegacyDefinition[]
@@ -175,7 +180,30 @@ async function harness(seed?: {
         return { agent: runAgent, dispose: async () => {} }
       },
     },
-    agentDefaultModel: { currentSelection: () => ({ provider: 'provider', model: 'model' }) },
+    agentDefaultModel: { currentSelection: () => ({ provider: 'provider', model: 'model', reasoningEffort: 'high' }) },
+    llm: {
+      listProviders: () => [{ id: 'provider', name: 'Provider' }, { id: 'deepseek', name: 'DeepSeek' }],
+      listModels: async (provider: string) => provider === 'deepseek'
+        ? [{ provider, id: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }]
+        : [{ provider, id: 'model', name: 'Model' }],
+      resolveModelInfo: async (provider: string, model: string, signal?: AbortSignal) => {
+        if (seed?.resolveModelGate !== undefined) {
+          await Promise.race([
+            seed.resolveModelGate,
+            new Promise<never>((_resolve, reject) => {
+              const abort = () => reject(new Error('The automation request was cancelled.'))
+              if (signal?.aborted === true) abort()
+              else signal?.addEventListener('abort', abort, { once: true })
+            }),
+          ])
+        }
+        if (`${provider}/${model}` === seed?.unavailableModel) throw new Error(`No adapter owns ${provider}/${model}`)
+        return {
+          provider, id: model, name: model,
+          reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'high' },
+        }
+      },
+    },
     agentPresets: {
       mount: async () => ({ id: 'standard' }),
       composedPreset: () => 'code',
@@ -218,11 +246,39 @@ test('run now admits at most one queued or running occurrence per automation', a
   })
   const first = await service.runNow(scope, definition.id)
   assert.equal(definition.agentPreset, 'code')
-  assert.equal(definition.provider, 'current-provider')
-  assert.equal(definition.model, 'current-model')
+  assert.deepEqual(definition.modelPolicy, { mode: 'inherit' })
+  assert.equal(definition.provider, null)
+  assert.equal(definition.model, null)
   assert.equal(first.status, 'queued')
   await assert.rejects(() => service.runNow(scope, definition.id), /queued or running/)
   await service.dispose()
+})
+
+test('pinned model policy is validated and snapshotted without following later defaults', async () => {
+  const { service } = await harness()
+  const definition = await service.create({ creatorKind: 'web', workspaceId: 'workspace-1' }, {
+    name: 'Pinned model task',
+    prompt: 'Use one explicit model.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    modelPolicy: {
+      mode: 'pinned', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'low',
+    },
+  })
+  const run = await service.runNow({ creatorKind: 'web', workspaceId: 'workspace-1' }, definition.id)
+  assert.deepEqual(definition.modelPolicy, {
+    mode: 'pinned', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'low',
+  })
+  assert.deepEqual(run.targetSnapshot.modelPolicy, definition.modelPolicy)
+  await service.dispose()
+
+  const unavailable = await harness({ unavailableModel: 'missing/model' })
+  await assert.rejects(() => unavailable.service.create({ creatorKind: 'web', workspaceId: 'workspace-1' }, {
+    name: 'Unavailable model task',
+    prompt: 'This must fail before scheduling.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    modelPolicy: { mode: 'pinned', provider: 'missing', model: 'model' },
+  }), /unavailable/i)
+  await unavailable.service.dispose()
 })
 
 test('create is idempotent for one durable client request id', async () => {
@@ -237,6 +293,34 @@ test('create is idempotent for one durable client request id', async () => {
   const retried = await service.create(scope, request)
   assert.equal(retried.id, first.id)
   assert.equal((await service.snapshot(scope)).definitions.length, 1)
+  await service.dispose()
+})
+
+test('dispatch returns a durable receipt and replays every mutating command once', async () => {
+  const { service, domain } = await harness()
+  const definition = await service.create(scope, {
+    name: 'Receipt task',
+    prompt: 'Inspect one bounded condition.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+  })
+  const command = {
+    kind: 'run-now' as const,
+    requestId: 'request-run-once',
+    automationId: definition.id,
+  }
+  const first = await service.dispatch(scope, command)
+  const replay = await service.dispatch(scope, command)
+
+  assert.equal(first.outcome, 'committed')
+  assert.equal(first.command, 'run-now')
+  assert.equal(first.replayed, false)
+  assert.equal(replay.replayed, true)
+  assert.equal(replay.entityId, first.entityId)
+  assert.deepEqual(
+    domain.receipts.writes.map(value => (value as { readonly outcome: string }).outcome),
+    ['unknown', 'committed'],
+  )
+  assert.equal((await service.snapshot(scope)).runs.length, 1)
   await service.dispose()
 })
 
@@ -293,6 +377,76 @@ test('the Web Automation Center snapshots all workspaces without a source Sessio
   const snapshot = await service.snapshot({ creatorKind: 'web' })
   assert.deepEqual(snapshot.workspaces.map(workspace => workspace.id), ['workspace-1', 'workspace-2'])
   assert.equal(snapshot.definitions[0]?.id, created.id)
+})
+
+test('snapshot exposes model catalog and structured health without starting a run', async () => {
+  const pinned = createDefinition({
+    id: 'automation-health',
+    name: 'Health check',
+    prompt: 'Inspect one bounded condition.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    modelPolicy: { mode: 'pinned', provider: 'missing', model: 'model' },
+    createdBy: { kind: 'web', sessionId: 'web:workspace-1' },
+    now: '2026-08-13T00:00:00Z',
+  })
+  const { service } = await harness({ definitions: [pinned], unavailableModel: 'missing/model' })
+  const snapshot = await service.snapshot({ creatorKind: 'web' })
+
+  assert.deepEqual(snapshot.defaultModel, { provider: 'provider', model: 'model', reasoningEffort: 'high' })
+  assert.equal(snapshot.models.some(model => model.provider === 'deepseek' && model.model === 'deepseek-reasoner'), true)
+  assert.equal(snapshot.definitions[0]?.health.status, 'blocked')
+  assert.equal(snapshot.definitions[0]?.health.issues[0]?.code, 'model_unavailable')
+  await service.dispose()
+})
+
+test('run preflight blocks an unavailable model before creating a Result Session', async () => {
+  const pinned = createDefinition({
+    id: 'automation-preflight',
+    name: 'Preflight task',
+    prompt: 'Inspect one bounded condition.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    modelPolicy: { mode: 'pinned', provider: 'missing', model: 'model' },
+    createdBy: { kind: 'web', sessionId: 'web:workspace-1' },
+    now: '2026-08-13T00:00:00Z',
+  })
+  const queued = createManualRun(pinned, '2026-08-13T00:05:00Z', 'preflight')
+  const { service, domain } = await harness({
+    definitions: [pinned], runs: [queued], unavailableModel: 'missing/model', config: { maxConcurrentRuns: 1 },
+  })
+  service.start()
+  await waitFor(() => domain.runs.get(queued.id)?.status === 'failed')
+  const failed = domain.runs.get(queued.id)!
+  assert.equal(failed.error?.code, 'model_unavailable')
+  assert.equal(failed.sessionId, null)
+  assert.equal(failed.phase, null)
+  await service.dispose()
+})
+
+test('the whole-job timeout covers model preflight before a Result Session exists', async () => {
+  const definition = storedDefinition('2026-08-13T00:00:00Z')
+  const queued = createManualRun(definition, '2026-08-13T00:05:00Z', 'whole-job-timeout')
+  const shortDeadlineRun: AutomationRun = {
+    ...queued,
+    targetSnapshot: { ...queued.targetSnapshot, runTimeoutMinutes: 0.0001 },
+  }
+  const never = new Promise<void>(() => {})
+  const { service, domain } = await harness({
+    definitions: [definition], runs: [shortDeadlineRun], resolveModelGate: never,
+    config: { maxConcurrentRuns: 1 },
+  })
+  try {
+    service.start()
+    await waitFor(() => domain.runs.get(queued.id)?.status === 'failed')
+    const failed = domain.runs.get(queued.id)!
+    assert.equal(failed.error?.code, 'run_timeout')
+    assert.equal(failed.sessionId, null)
+    assert.equal(failed.phase, null)
+    assert.equal(failed.lease, null)
+  } finally {
+    await service.dispose()
+  }
 })
 
 test('concurrent updates are serialized and a deletion cannot be resurrected', async () => {
@@ -544,23 +698,31 @@ test('a snapshot cancelled while waiting for the service queue does not enter wo
   await service.dispose()
 })
 
-test('opening after a host stop terminalizes queued work without rerunning it', async () => {
+test('opening after a host stop preserves queued work that never crossed the side-effect boundary', async () => {
   const definition = storedDefinition('2026-08-13T00:00:00Z')
   const queued = createManualRun(definition, '2026-08-13T00:05:00Z', 'interrupted')
   const { service, domain } = await harness({ definitions: [definition], runs: [queued] })
   const recovered = domain.runs.get(queued.id)!
-  assert.equal(recovered.status, 'failed')
-  assert.equal(recovered.error?.code, 'host_interrupted')
-  assert.equal(recovered.unread, true)
+  assert.equal(recovered.status, 'queued')
+  assert.equal(recovered.phase, 'claim')
+  assert.equal(recovered.error, null)
   await service.dispose()
   assert.equal(domain.closed, true)
 })
 
-test('startup recovery archives an interrupted run Session after terminalizing its audit row', async () => {
+test('startup recovery archives a run that may have produced side effects and marks it interrupted', async () => {
   const definition = storedDefinition('2026-08-13T00:00:00Z')
   const interrupted: AutomationRun = {
     ...createManualRun(definition, '2026-08-13T00:05:00Z', 'interrupted-session'),
     status: 'running',
+    phase: 'executing',
+    lease: {
+      ownerId: 'dead-host',
+      acquiredAt: '2026-08-13T00:05:20Z',
+      heartbeatAt: '2026-08-13T00:05:30Z',
+      expiresAt: '2026-08-13T00:06:00Z',
+      sideEffectsPossible: true,
+    },
     sessionId: 'dsh-automation-session-interrupted',
     startedAt: '2026-08-13T00:05:30Z',
   }
@@ -570,9 +732,37 @@ test('startup recovery archives an interrupted run Session after terminalizing i
     config: { archiveRunSessions: true },
   })
   try {
-    assert.equal(domain.runs.get(interrupted.id)?.status, 'failed')
+    assert.equal(domain.runs.get(interrupted.id)?.status, 'interrupted')
     assert.equal(domain.runs.get(interrupted.id)?.error?.code, 'host_interrupted')
     assert.deepEqual(archivedSessionIds, [interrupted.sessionId])
+  } finally {
+    await service.dispose()
+  }
+})
+
+test('supervisor persists every execution phase and clears its lease at terminal completion', async () => {
+  const { service, domain } = await harness({
+    completeRuns: true,
+    config: { maxConcurrentRuns: 1 },
+  })
+  try {
+    const definition = await service.create(scope, {
+      name: 'Phase audit',
+      prompt: 'Return one bounded result.',
+      schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    })
+    const queued = await service.runNow(scope, definition.id)
+    service.start()
+    await waitFor(() => domain.runs.get(queued.id)?.status === 'succeeded')
+
+    const writes = domain.runs.writes.filter(run => run.id === queued.id)
+    assert.deepEqual(
+      [...new Set(writes.map(run => run.phase).filter(Boolean))],
+      ['claim', 'setup', 'executing', 'settling', 'delivery'],
+    )
+    assert.equal(writes.some(run => run.lease?.sideEffectsPossible === true), true)
+    assert.equal(domain.runs.get(queued.id)?.phase, null)
+    assert.equal(domain.runs.get(queued.id)?.lease, null)
   } finally {
     await service.dispose()
   }
@@ -699,10 +889,10 @@ test('durable retention is bounded per automation and keeps automation session i
     config: { historyLimit: 1 },
   })
   assert.equal(domain.runs.get(oldRun.id), undefined)
-  // Startup recovery terminalizes the active record before retention, so only
-  // the newest recovered terminal remains at a limit of one.
-  assert.equal(domain.runs.get(activeRun.id)?.status, 'failed')
-  assert.equal(domain.runs.get(newRun.id), undefined)
+  // Work that never crossed the side-effect boundary remains queued and does
+  // not consume the bounded terminal-history allowance.
+  assert.equal(domain.runs.get(activeRun.id)?.status, 'queued')
+  assert.equal(domain.runs.get(newRun.id)?.status, 'failed')
   assert.equal(domain.runs.get(otherRun.id)?.status, 'succeeded')
   assert.equal(service.ownsSession(otherRun.sessionId!), true)
   assert.equal(service.ownsSession('dsh-automation-session-pruned-before-prompt'), true)
