@@ -42,3 +42,13 @@ The Shell extension remains an upstream enhancement, not an installation prerequ
 - [x] Add cross-platform CI, fixed-version installation, SBOM, provenance and artifact attestation workflows.
 - [ ] Complete stock rc.8 Desktop and remaining destructive/error-path observations.
 - [ ] Submit the generic Shell slots upstream and list the plugin in community directories.
+
+## Milestone 5 — Alpha.6 trusted runtime
+
+- [x] Add stock rc.8 global management through `settings.section` while retaining the Conversation shortcut.
+- [x] Expose inherit/pinned provider, model and reasoning policy in Web and Agent Tools.
+- [x] Validate Workspace, Preset and model before Result Session creation and expose structured blocked health.
+- [x] Persist run phases, lease heartbeat, side-effect boundary and effective model.
+- [x] Extend the deadline across the complete job and recover interrupted runs conservatively.
+- [x] Route every mutation through durable idempotent receipts and post-write reconciliation.
+- [ ] Complete alpha.6 stock rc.8 Web/Desktop observed acceptance before promoting beyond Alpha.

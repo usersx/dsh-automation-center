@@ -8,13 +8,14 @@ Automation Center 是 DSH 的全局一级页面。Automation 是持久化任务�
 
 ### 原版兼容 Surface
 
-未修改的 DSH `0.1.0-rc.8` 已公开 Session 作用域的 `conversation.view`。插件在两个 Shell Slot 不可用时注册：
+未修改的 DSH `0.1.0-rc.8` 已公开全局 `settings.section` 和 Session 作用域的 `conversation.view`。插件始终注册 Settings 管理页，并在两个 Shell Slot 不可用时保留 Session 快捷入口：
 
 ```text
-conversation.view / automation -> Automation Center
+settings.section / automation  -> Automation Center（权威全局入口）
+conversation.view / automation -> Automation Center（Session 快捷入口）
 ```
 
-这种模式无需修改 DSH，也不注入 DOM；代价是必须先存在并打开一个 Session。Surface 只负责承载视图，Host Engine、RPC、存储和 Scheduler 均与全局模式相同。
+这种模式无需修改 DSH，也不注入 DOM。即使没有当前 Session，用户仍可从 Settings 查看和管理所有 Workspace 的任务；Conversation Surface 只提供就近入口。两个 Surface 只负责承载视图，Host Engine、RPC、存储和 Scheduler 均与增强模式相同。
 
 ### 全局 Shell Surface
 
@@ -34,7 +35,7 @@ sidebar.primary.action / automation -> 自动化入口
 shell.page / automation             -> Automation Center
 ```
 
-Client 启动时检查 `ctx.layout` 导航能力：`surface`、`openPage` 与 `showConversation` 全部存在时选择全局模式，否则通过 manifest 已声明的 `@deepseek-ai/dsh-client-ui-conversation` 依赖注册原版兼容模式。若目标 DSH 连该依赖都无法解析，DSH Loader 会在 Client 组合阶段明确失败，不会静默丢失入口。
+Client 始终通过 manifest 已声明的 `@deepseek-ai/dsh-client-ui-settings` 注册全局设置页。启动时再检查 `ctx.layout` 导航能力：`surface`、`openPage` 与 `showConversation` 全部存在时选择增强 Shell 模式，否则通过 `@deepseek-ai/dsh-client-ui-conversation` 注册原版快捷入口。若目标 DSH 无法解析这些声明依赖，DSH Loader 会在 Client 组合阶段明确失败，不会静默丢失入口。
 
 插件不使用 DOM 注入，也不覆盖 Sidebar。Surface Adapter 只暴露注册与导航差异，不复制业务逻辑。
 
@@ -56,25 +57,25 @@ interface AutomationEngine {
     signal?: AbortSignal,
   ): Promise<AutomationCommandReceipt>
 
-  readonly changes: HostObservable<AutomationChange>
 }
 ```
 
-CLI、Scheduler、Loopback RPC、Agent Tools 和 Client UI 都只能调用这个接口，不直接读写 Storage Domain。
+Scheduler、Loopback RPC、Agent Tools 和 Client UI 都复用 `snapshot` / `dispatch` 主边界，不直接读写 Storage Domain。每个写命令带稳定 request ID，返回持久 Receipt：`committed`、`rejected` 或 `unknown`；Client 在 Receipt 后执行 read-after-write，以 Definition Store 的 revision 为唯一权威。
 
 ## 执行模型
 
 每个 Run：
 
 1. 以确定性的 occurrence key 领取计划。
-2. 通过 Workspace Registry 解析目标 Workspace。
-3. 快照 Agent Preset、模型、权限和当前工作目录。
-4. 创建无父 Session、无历史、无临时授权的 Fresh Agent。
-5. 使用 `source.kind = automation` 发送首条任务指令。
-6. 等待成功、失败、取消或超时。
-7. 保存摘要、结构化错误和 Result Session ID。
+2. 运行 Workspace、Preset、provider/model/reasoning 预检；不可用目标在创建 Session 前进入结构化失败。
+3. 快照 Agent Preset、显式 Model Policy、权限和当前工作目录。
+4. 持久记录 `claim -> setup -> executing -> settling -> delivery` 阶段以及 owner、heartbeat、expiry 和副作用边界。
+5. 创建无父 Session、无历史、无临时授权的 Fresh Agent。
+6. 使用 `source.kind = automation` 发送首条任务指令。
+7. 以 whole-job deadline 等待成功、失败、取消或超时；deadline 从预检开始，覆盖收尾与交付。
+8. 保存摘要、结构化错误、实际模型和 Result Session ID，并清除 lease。
 
-同一个 Automation 不允许重叠运行；第一版不自动重试，避免重复产生外部副作用。
+同一个 Automation 不允许重叠运行；第一版不自动重试，避免重复产生外部副作用。Host 重启时，尚未越过副作用边界且没有 Session 的 Run 可以重新排队；其他遗留 Run 标记为 `host_interrupted`，绝不盲目重放。
 
 ## 权限边界
 
@@ -93,4 +94,4 @@ CLI、Scheduler、Loopback RPC、Agent Tools 和 Client UI 都只能调用这个
 
 ## 发布边界
 
-当前插件提供可安装的 Host/Web Bundle，并能在未经修改的 DSH `0.1.0-rc.8` 上使用原版兼容 Surface。Shell Patch/未来上游 Slot 只决定是否能展示真正的全局根入口，不再是安装前置条件。Release 必须分别声明 Stock Compatible 与 Global Center 的验收结果，不能把 Session 标签描述成全局入口。只有 [验收标准](acceptance-criteria.zh-CN.md) 中对应发布声明的 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。
+当前插件提供可安装的 Host/Web Bundle，并能在未经修改的 DSH `0.1.0-rc.8` 上使用 Settings 全局管理页和 Conversation 快捷入口。Shell Patch/未来上游 Slot 只决定是否能展示 Sidebar 根入口，不再是安装前置条件。Release 必须分别声明 Stock Compatible 与 Global Center 的验收结果，不能把 Settings 页面描述成 Sidebar 根入口。只有 [验收标准](acceptance-criteria.zh-CN.md) 中对应发布声明的 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。

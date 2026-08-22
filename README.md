@@ -12,12 +12,12 @@
 
 DSH Automation Center 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供可计划、可审计的自动化任务。每次触发都会在指定 Workspace 中创建新的根 Agent 和 Result Session；任务定义、计划、权限与运行历史由 Automation Center 管理，完整结果和轨迹保存在 Result Session 中。
 
-当前版本同时支持两种原生界面，不注入 DOM，也不替换 Sidebar：
+当前版本会按 DSH 能力选择原生界面，不注入 DOM，也不替换 Sidebar：
 
-- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 自动注册为 Session 内的“自动化”标签，普通用户可直接安装，不需要 Shell Page Patch。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 在“设置 → 自动化”提供全局管理页，无 Session 也能进入；Session 内的“自动化”标签作为快捷入口。普通用户可直接安装，不需要 Shell Page Patch。
 - **全局中心模式**：当 DSH 提供 `sidebar.primary.action` 与 `shell.page` 时，自动升级为“新会话”下方、“工作区”上方的全局入口，无需先打开 Session。
 
-> 当前版本：`0.1.0-alpha.5`。兼容性通过不等于安全审计通过。
+> 当前版本：`0.1.0-alpha.6`。兼容性通过不等于安全审计通过。
 
 ## 从 npm 安装（推荐）
 
@@ -36,7 +36,7 @@ dsh plugin --profile desktop add dsh-automation-center@latest
 需要可复现安装时固定版本：
 
 ```sh
-dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.5
+dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.6
 ```
 
 安装后完整退出并重新打开 DSH，让 Host Bundle 在启动时挂载。不要只刷新网页。Node.js 需使用 DSH 支持的 `^22.19.0` 或 `>=24.0.0`。
@@ -45,7 +45,7 @@ dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.5
 
 ## 为什么需要 Automation Center
 
-Session 内标签能解决原版 DSH 的可安装性，却仍有信息架构冲突：用户需要先进入一个会话管理任务，而任务执行时又会创建另一个新 Session。全局中心模式进一步解决这个问题：
+Automation 不属于某个聊天 Session。`alpha.6` 因此把原版 rc.8 的权威管理入口放进全局 Settings；增强 Shell 还可以把同一页面提升到左侧一级入口：
 
 - 无需先打开 Session；
 - 跨 Workspace 查看任务、计划、最近运行和失败项；
@@ -61,8 +61,12 @@ Session 内标签能解决原版 DSH 的可安装性，却仍有信息架构冲�
 - 每次 occurrence 创建新的根 Agent 和 Session，不复用聊天会话。
 - Result Session 使用自动化任务名作为标题，而不是 Workspace 或项目名。
 - “只读”和“Workspace 可写”两种无人值守权限。
-- 创建幂等、防重叠、确定性 occurrence 领取、有限 misfire 补偿与 Host 重启恢复。
-- 持久运行历史、摘要、Result Session 入口和结构化错误码。
+- 每个任务可选择“运行时继承 DSH 默认模型”，或固定 provider、model 和 reasoning effort；运行历史记录实际模型。
+- 保存与运行前检查 Workspace、Preset 和模型；不可用目标显示为 `blocked`，不会先创建无效 Session。
+- 创建幂等、防重叠、确定性 occurrence 领取、有限 misfire 补偿与保守的 Host 重启恢复。
+- `claim / setup / executing / settling / delivery` 阶段、租约心跳与覆盖完整作业的超时。
+- 所有写操作返回持久 Receipt（request ID、revision、`committed / rejected / unknown`），Client 随后读取权威状态。
+- 持久运行历史、摘要、Result Session 入口、实际模型和结构化错误码。
 - 只读导入旧 `dsh_automation` v1 数据，原存储域保持不变。
 
 ## 原版 DeepSeek 界面截图
@@ -94,9 +98,9 @@ Session 内标签能解决原版 DSH 的可安装性，却仍有信息架构冲�
 
 ## 使用方法
 
-1. 原版兼容模式：先打开任一 Session，再点击顶部“自动化”标签。全局中心模式：直接点击左侧栏“自动化”。
+1. 原版兼容模式：打开“设置 → 自动化”，也可以从任一 Session 顶部的“自动化”快捷标签进入。全局中心模式：直接点击左侧栏“自动化”。
 2. 点击“新建自动化”或“创建第一个自动化”。
-3. 填写名称、任务指令、Workspace、计划、时区、Agent Preset、权限和超时。
+3. 填写名称、任务指令、Workspace、计划、时区、Agent Preset、模型策略、权限和超时。
 4. 检查下次运行预览并保存。
 5. 等待计划触发，或点击“立即运行”。
 6. 在“最近运行”查看摘要，并打开 Result Session 查看完整结果。
@@ -107,7 +111,7 @@ Session 内标签能解决原版 DSH 的可安装性，却仍有信息架构冲�
 
 ```text
 DSH Surface Adapter
-  ├─ stock rc.8: conversation.view
+  ├─ stock rc.8: settings.section + conversation.view shortcut
   └─ enhanced: sidebar.primary.action + shell.page
                          │
                          ▼
@@ -128,14 +132,14 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run
 
 | 目标 | 安装 | 界面 | 状态 |
 |---|---|---|---|
-| 原版 DSH `0.1.0-rc.8` / Web | 无需 Patch | Session 内“自动化”标签 | 隔离实机观察通过；详见验收记录 |
-| 原版 DSH `0.1.0-rc.8` / Desktop | 无需 Patch | Session 内“自动化”标签 | 待 rc.8 Desktop 重新实机验收 |
+| 原版 DSH `0.1.0-rc.8` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.5 会话模式实机通过；Alpha.6 Settings 自动化契约通过，实机复验待完成 |
+| 原版 DSH `0.1.0-rc.8` / Desktop | 无需 Patch | Settings 全局页 + Session 快捷标签 | 待 rc.8 Desktop 重新实机验收 |
 | 提供两个 Shell Slot 的 DSH / Web | 无需插件改动 | 全局根入口和独立页面 | 已观察通过 |
 | Windows / Linux 原生 Desktop | — | 随目标 DSH 能力自动选择 | 尚未实机验收 |
 
 原版 rc.8 没有 `sidebar.primary.action` 和 `shell.page`，所以插件无法只靠公开 API 在“新会话”下方增加根入口。为了保证可卸载、可维护和主题兼容，本项目不使用 DOM 注入模拟该入口。两个 Slot 一旦进入 DSH 上游，同一个 npm 包会自动启用全局中心模式。
 
-精确的通过、阻塞和未运行项见[验收结果](docs/acceptance-results-2026-08-20.md)。
+精确的通过、阻塞和未运行项见 [Alpha.6 验收结果](docs/acceptance-results-2026-08-23-alpha.6.md)；Alpha.5 实机基线保留在[上一版记录](docs/acceptance-results-2026-08-20.md)。
 
 ## 配置
 
@@ -186,12 +190,12 @@ cd dsh-automation-center
 pnpm install
 pnpm check
 npm pack
-dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.5.tgz
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.6.tgz
 ```
 
 ## 已知限制
 
-- 原版 rc.8 只能提供 Session 内标签；真正的全局入口需要上游提供两个通用 Shell Slot。
+- 原版 rc.8 可在 Settings 提供全局管理页，但左侧栏一级入口仍需要上游提供两个通用 Shell Slot。
 - 第一版不提供分布式 Scheduler、远程执行节点或云端凭证托管。
 - 取消不会撤销已经发生的文件修改或外部调用。
 - 当前仍是 Alpha；稳定版发布条件以验收文档为准。

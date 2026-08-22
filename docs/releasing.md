@@ -24,8 +24,8 @@ The workflow re-runs checks, packs one tarball, generates a checksum and SPDX JS
 ## Verification
 
 ```sh
-npm view dsh-automation-center@0.1.0-alpha.5 version dist.integrity dist.tarball
-gh release view v0.1.0-alpha.5 --repo usersx/dsh-automation-center
+npm view dsh-automation-center@0.1.0-alpha.6 version dist.integrity dist.tarball
+gh release view v0.1.0-alpha.6 --repo usersx/dsh-automation-center
 ```
 
 The fixed-version install command is the reproducible recommendation. `@latest` is a convenience alias and can change over time.

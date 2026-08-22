@@ -26,7 +26,7 @@ for (const marker of ['SC-01', 'B-01', 'C-01', 'D-01', 'E-01', '一票否决项'
 }
 
 const readme = await readFile('README.md', 'utf8')
-for (const marker of ['dsh-automation-center@latest', 'dsh-automation-center@0.1.0-alpha.5', '原版兼容模式', 'conversation.view']) {
+for (const marker of ['dsh-automation-center@latest', 'dsh-automation-center@0.1.0-alpha.6', '原版兼容模式', 'settings.section']) {
   if (!readme.includes(marker)) throw new Error(`README is missing release marker: ${marker}`)
 }
 

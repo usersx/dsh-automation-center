@@ -4,10 +4,25 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-08-23
+
+### Added
+
+- Explicit per-automation model policy: inherit the live DSH default or pin an exact provider, model and optional reasoning effort in Web and Agent Tools.
+- Native `settings.section` Automation Center for stock DSH rc.8, available without opening a Session; the Conversation tab remains a shortcut.
+- Durable command receipts with request IDs, replay detection, revisions and `committed | rejected | unknown` outcomes for every mutation.
+- Run supervisor phases (`claim`, `setup`, `executing`, `settling`, `delivery`), leases, heartbeats and conservative interrupted-run recovery.
+- Structured target/model preflight health in snapshots and an effective-model record on each Run.
+
 ### Changed
 
-- Expanded the bilingual contribution workflow with reproducibility, isolated-profile verification, evidence, and data-safety requirements.
-- Expanded the Bug form to capture installation source, runtime, Surface, Workspace, legacy-plugin, regression, and sanitized diagnostic context.
+- The run deadline now covers preflight, setup, Agent execution, settling and delivery instead of only the Agent turn.
+- Client mutations perform a post-commit authoritative read; an unknown outcome also triggers reconciliation before the uncertainty is shown.
+- Expanded the bilingual contribution workflow and Bug form with reproducibility, isolated-profile verification and sanitized diagnostics.
+
+### Fixed
+
+- A missing Workspace, Agent preset or selected model is shown as blocked before Run admission rather than failing after Session creation.
 
 ## [0.1.0-alpha.5] - 2026-08-20
 
@@ -47,7 +62,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - First npm pre-release of the global Automation Center and fresh-session execution engine.
 
-[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.5...HEAD
+[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/usersx/dsh-automation-center/releases/tag/v0.1.0-alpha.3

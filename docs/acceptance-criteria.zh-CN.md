@@ -4,7 +4,7 @@
 
 目标插件需要在 DSH Web 和 DSH Desktop 中提供自动化任务中心，并按 DSH 实际扩展能力选择界面：
 
-- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 通过公开的 `conversation.view` 提供“自动化”标签；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 通过公开的 `settings.section` 提供全局管理页，并以 `conversation.view` 提供 Session 快捷入口；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
 - **全局中心模式**：DSH 同时提供 `sidebar.primary.action` 与 `shell.page` 时，提供完整的全局 Automation Center：
   - 入口位于左侧栏“新会话”正下方、“工作区”正上方；
   - 与“新会话”同属一级入口；
@@ -22,10 +22,10 @@
 | ID | 验收项 | 通过标准 |
 |---|---|---|
 | SC-01 | 无 Patch 安装 | 未修改的 DSH `0.1.0-rc.8` 可以直接安装并启动，不要求用户替换 DSH 构建 |
-| SC-02 | 原生扩展点 | 使用 `conversation.view` 注册标签，不扫描或修改 DSH DOM |
-| SC-03 | Surface 协商 | `ctx.layout` 提供 Shell 导航能力时选择全局中心；否则注册声明在 Client manifest 中的 Conversation 依赖 |
+| SC-02 | 原生扩展点 | 使用 `settings.section` 注册全局管理页、`conversation.view` 注册快捷标签，不扫描或修改 DSH DOM |
+| SC-03 | Surface 协商 | 始终注册 Settings；`ctx.layout` 提供 Shell 导航能力时再选择全局 Shell 中心，否则保留 Conversation 快捷入口 |
 | SC-04 | 功能同源 | 两种界面复用同一 AutomationEngine、RPC、数据和任务行为，不形成两套调度器 |
-| SC-05 | 明确边界 | README 明确说明原版 rc.8 需进入 Session 才能看到标签，不能把它描述为全局根入口 |
+| SC-05 | 明确边界 | README 明确区分原版 Settings 全局页、Session 快捷标签和增强 DSH 的 Sidebar 根入口 |
 
 ## 2. P0 功能验收
 
@@ -37,7 +37,7 @@
 | A-02 | Desktop 生效 | 安装到 Desktop Profile 后，完整重启一次即可生效 |
 | A-03 | Web 生效 | 对应 Profile 的 DSH Web 页面中可以看到插件 |
 | A-04 | 冷启动稳定 | 连续启动 DSH Desktop 3 次，不闪退、不白屏 |
-| A-05 | 缺少扩展点 | DSH 不支持 Shell Slot 时自动降级；若目标连 manifest 声明的 Conversation 包都无法解析，则由 DSH Loader 明确报告依赖错误 |
+| A-05 | 缺少扩展点 | DSH 不支持 Shell Slot 时自动降级到 Settings + Conversation；若 manifest 声明依赖无法解析，则由 DSH Loader 明确报告依赖错误 |
 | A-06 | 卸载 | 卸载并重启后入口和页面消失，DSH 其他功能正常 |
 | A-07 | 插件冲突 | 旧 `dsh-automation` 同时启用时明确提示冲突，不启动第二套调度器 |
 
@@ -81,7 +81,7 @@ DeepSeek Harness
 
 ### D. 自动化任务创建
 
-创建表单至少包含：名称、任务指令、Workspace、运行计划、时区、Agent Preset、权限预设和超时时间。
+创建表单至少包含：名称、任务指令、Workspace、运行计划、时区、Agent Preset、模型策略、权限预设和超时时间。
 
 | ID | 验收项 | 通过标准 |
 |---|---|---|
@@ -96,6 +96,8 @@ DeepSeek Harness
 | D-09 | 删除 | 删除前需要确认，删除 Definition 后保留已有 Run 历史 |
 | D-10 | 立即运行 | 可以不等待 Schedule，创建一次手动 Run |
 | D-11 | 重复提交 | 连续保存或网络重试不会创建重复任务 |
+| D-12 | 模型策略 | 可以选择运行时继承 DSH 默认模型，或固定 provider/model/reasoning；固定组合在保存时校验 |
+| D-13 | 写入收据 | 所有写操作返回 request ID、revision 与 `committed/rejected/unknown`，Client 随后读取权威状态 |
 
 ### E. 自动运行与 Result Session
 
@@ -107,15 +109,16 @@ DeepSeek Harness
 | E-04 | 不继承授权 | Result Session 不继承临时人工授权 |
 | E-05 | Workspace 正确 | Agent 在 Definition 指定的 Workspace 中执行 |
 | E-06 | 来源标识 | Session 带有 Automation ID、Run ID 和计划时间来源信息 |
-| E-07 | 运行状态 | Run 正确经历 `queued -> running -> succeeded/failed/cancelled` |
+| E-07 | 运行状态 | Run 正确经历 `queued -> running -> succeeded/failed/cancelled/interrupted` |
 | E-08 | 结果入口 | 点击运行记录可以打开对应 Result Session |
 | E-09 | 返回中心 | Result Session 中提供“返回自动化中心”入口 |
 | E-10 | 运行摘要 | 展示结果摘要、开始时间、耗时和终态 |
 | E-11 | 不重复执行 | 同一计划时间在重启、刷新或重复调度后最多领取一次 |
 | E-12 | 并发保护 | 同一个 Automation 运行中时不启动第二个重叠 Run |
-| E-13 | 超时 | 超时后终止并记录 `run_timeout` |
+| E-13 | 超时 | whole-job deadline 覆盖预检、setup、执行、settling 和 delivery；超时后终止并记录 `run_timeout` |
 | E-14 | 取消 | 可以取消运行，并提示已有副作用不会自动回滚 |
 | E-15 | Host 重启 | 遗留的 `running` Run 标记为 `host_interrupted` |
+| E-16 | Supervisor | 持久记录阶段、owner、heartbeat、expiry 和副作用边界；安全 Run 可恢复，可能已有副作用的 Run 不自动重放 |
 
 ### F. 任务列表与运行历史
 
