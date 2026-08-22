@@ -27,11 +27,18 @@ const t = (key: keyof typeof en, params?: Record<string, unknown>): string => {
 const TARGET = {
   workspaceId: 'workspace-1', workspaceName: 'Repository',
   agentPreset: 'standard', runTimeoutMinutes: 60,
+  modelPolicy: { mode: 'inherit' as const },
+  health: { status: 'ready' as const, issues: [], effectiveModel: { provider: 'provider', model: 'model' } },
 } as const
 
 const SNAPSHOT_META = {
   workspaces: [{ id: 'workspace-1', title: 'Repository', path: '/workspace' }],
   presets: [{ id: 'standard', name: 'Standard', broken: false }],
+  defaultModel: { provider: 'provider', model: 'model', reasoningEffort: 'high' },
+  models: [{
+    provider: 'provider', providerName: 'Provider', model: 'model', modelName: 'Model',
+    reasoningEfforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+  }],
   migration: { detectedDefinitions: 0, detectedRuns: 0, importedDefinitions: 0, importedRuns: 0 },
 } as const
 
@@ -66,6 +73,7 @@ test('buildCreateInput trims text and normalizes a weekly schedule', () => {
     permission: 'workspace-write',
     workspaceId: 'workspace-1',
     agentPreset: 'standard',
+    modelPolicy: { mode: 'inherit' },
     runTimeoutMinutes: 60,
   })
 })
@@ -119,11 +127,16 @@ test('editing starts from the complete stored prompt and preserves interval cade
     permission: 'workspace-write',
     workspaceId: 'workspace-1',
     agentPreset: 'standard',
+    modelPolicy: { mode: 'inherit' },
     runTimeoutMinutes: 60,
   })
   assert.deepEqual(buildUpdateInput({ ...form, prompt: `${form.prompt}\nAdd a short risk summary.` }, automation), {
     prompt: `${automation.prompt}\nAdd a short risk summary.`,
   })
+  assert.throws(
+    () => buildUpdateInput({ ...form, modelMode: 'pinned', modelProvider: '', model: '' }, automation),
+    (error: unknown) => error instanceof AutomationFormError && error.key === 'form.error.model',
+  )
 })
 
 test('editing a completed one-shot can change its prompt without resubmitting a past schedule', () => {
@@ -226,14 +239,15 @@ test('opening a run Session marks it read only after navigation succeeds', async
           value: { ...SNAPSHOT_META, automations: [], runs: [], serverNow: new Date().toISOString() },
         }
       }
-      return { ok: true, value: {} }
+      return { ok: true, value: { requestId: 'request', command: endpoint, outcome: 'committed', appliedAt: new Date().toISOString(), replayed: false } }
     },
   }
   const runtime = createAutomationRuntime(rpc)
 
   await runtime.openRunSession('run-1', async () => {})
   assert.deepEqual(calls.map(call => call.endpoint), ['mark-read', 'snapshot'])
-  assert.deepEqual(calls[0]?.payload, { runId: 'run-1' })
+  assert.equal((calls[0]?.payload as { runId?: string }).runId, 'run-1')
+  assert.match((calls[0]?.payload as { clientRequestId?: string }).clientRequestId ?? '', /.+/)
 
   calls.length = 0
   await assert.rejects(
@@ -244,7 +258,8 @@ test('opening a run Session marks it read only after navigation succeeds', async
 
   await runtime.markRunRead('run-without-session')
   assert.deepEqual(calls.map(call => call.endpoint), ['mark-read', 'snapshot'])
-  assert.deepEqual(calls[0]?.payload, { runId: 'run-without-session' })
+  assert.equal((calls[0]?.payload as { runId?: string }).runId, 'run-without-session')
+  assert.match((calls[0]?.payload as { clientRequestId?: string }).clientRequestId ?? '', /.+/)
 })
 
 test('an archived run labels its Session without rendering a broken open button', () => {
@@ -290,7 +305,7 @@ test('editing sends a revision-guarded update and refreshes the snapshot', async
           value: { ...SNAPSHOT_META, automations: [], runs: [], serverNow: new Date().toISOString() },
         }
       }
-      return { ok: true, value: { id: 'automation-edit', revision: 8 } }
+      return { ok: true, value: { requestId: 'request', command: endpoint, outcome: 'committed', entityId: 'automation-edit', revision: 8, appliedAt: new Date().toISOString(), replayed: false } }
     },
   }
   const runtime = createAutomationRuntime(rpc)
@@ -305,9 +320,76 @@ test('editing sends a revision-guarded update and refreshes the snapshot', async
   await runtime.updateAutomation('automation-edit', 7, input)
 
   assert.deepEqual(calls.map(call => call.endpoint), ['update', 'snapshot'])
-  assert.deepEqual(calls[0]?.payload, {
+  assert.deepEqual({ ...(calls[0]?.payload as Record<string, unknown>), clientRequestId: '<dynamic>' }, {
     automationId: 'automation-edit',
     expectedRevision: 7,
     input,
+    clientRequestId: '<dynamic>',
   })
+})
+
+test('two intentional creates with identical input receive distinct durable command ids', async () => {
+  const calls: Array<{ endpoint: string; payload: unknown }> = []
+  const rpc = {
+    call: async (_channel: string, endpoint: string, payload: unknown) => {
+      calls.push({ endpoint, payload })
+      if (endpoint === 'snapshot') {
+        return {
+          ok: true,
+          value: { ...SNAPSHOT_META, automations: [], runs: [], serverNow: new Date().toISOString() },
+        }
+      }
+      return {
+        ok: true,
+        value: {
+          requestId: (payload as { clientRequestId: string }).clientRequestId,
+          command: 'create', outcome: 'committed', entityId: 'automation-created', revision: 1,
+          appliedAt: new Date().toISOString(), replayed: false,
+        },
+      }
+    },
+  }
+  const runtime = createAutomationRuntime(rpc)
+  const input = {
+    name: 'Intentional duplicate', prompt: 'Create this task twice.',
+    schedule: { kind: 'daily' as const, time: '09:00', timeZone: 'UTC' },
+    timeZone: 'UTC', permission: 'read-only' as const,
+    workspaceId: 'workspace-1', agentPreset: 'standard', modelPolicy: { mode: 'inherit' as const },
+    runTimeoutMinutes: 60,
+  }
+
+  await runtime.createAutomation(input)
+  await runtime.createAutomation(input)
+
+  const createCalls = calls.filter(call => call.endpoint === 'create')
+  assert.equal(createCalls.length, 2)
+  assert.notEqual(
+    (createCalls[0]?.payload as { clientRequestId?: string }).clientRequestId,
+    (createCalls[1]?.payload as { clientRequestId?: string }).clientRequestId,
+  )
+})
+
+test('an unknown mutation outcome refreshes authoritative state before reporting uncertainty', async () => {
+  const calls: string[] = []
+  const rpc = {
+    call: async (_channel: string, endpoint: string) => {
+      calls.push(endpoint)
+      if (endpoint === 'snapshot') {
+        return { ok: true, value: { ...SNAPSHOT_META, automations: [], runs: [], serverNow: new Date().toISOString() } }
+      }
+      return {
+        ok: true,
+        value: {
+          requestId: 'request-unknown', command: 'run-now', outcome: 'unknown',
+          appliedAt: new Date().toISOString(), replayed: false,
+          error: { code: 'result_unknown', message: 'The run command may have committed.' },
+        },
+      }
+    },
+  }
+  const runtime = createAutomationRuntime(rpc)
+
+  await assert.rejects(() => runtime.runNow('automation-1'), /may have committed/)
+  assert.deepEqual(calls, ['run-now', 'snapshot'])
+  assert.equal(runtime.source.getSnapshot().phase, 'ready')
 })

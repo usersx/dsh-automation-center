@@ -42,6 +42,36 @@ function ConversationAutomationView(
   )
 }
 
+function SettingsAutomationView(
+  props: AutomationViewProps & { readonly close: () => void },
+): JSX.Element {
+  const { close, openSession, ...view } = props
+  return (
+    <AutomationView
+      {...view}
+      openSession={async (runId, sessionId) => {
+        close()
+        await openSession(runId, sessionId)
+      }}
+    />
+  )
+}
+
+function registerSettingsSection(
+  ctx: ClientContext,
+  runtime: AutomationRuntime,
+  t: Translate,
+): void {
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'automation',
+    order: 35,
+    locale: NS,
+    label: () => t('tab'),
+    inject: () => pageShares(ctx, runtime, () => undefined),
+  }, SettingsAutomationView))
+}
+
 function registerNativeShell(
   ctx: ClientContext,
   runtime: AutomationRuntime,
@@ -92,15 +122,16 @@ function registerConversationFallback(
 
 /**
  * Select and register the deepest Automation Center surface supported by the
- * running DSH client. The enhanced layout service is the capability marker;
- * stock rc.8 receives the manifest-declared, session-scoped Conversation tab
- * without changing the Host, storage, RPC, or Automation Engine interfaces.
+ * running DSH client. Settings is the stock global management surface. The
+ * enhanced layout service adds a Sidebar root action/page, while stock rc.8
+ * also keeps the manifest-declared, Session-scoped Conversation shortcut.
  */
 export function registerAutomationSurface(
   ctx: ClientContext,
   runtime: AutomationRuntime,
   t: Translate,
 ): AutomationSurfaceMode {
+  registerSettingsSection(ctx, runtime, t)
   const hasNativeNavigation = ctx.layout?.surface !== undefined
     && ctx.layout.openPage !== undefined
     && ctx.layout.showConversation !== undefined

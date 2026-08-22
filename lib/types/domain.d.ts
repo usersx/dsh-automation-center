@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AutomationDefinition, AutomationRun, AutomationSchedule, CreateAutomationInput, DeleteAutomationPlan, UpdateAutomationInput } from './types.ts';
+import type { AutomationDefinition, AutomationRun, AutomationSchedule, CreateAutomationInput, DeleteAutomationPlan, UpdateAutomationInput, StoredAutomationCommandReceipt } from './types.ts';
 export declare const automationScheduleSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     kind: z.ZodLiteral<"once">;
     at: z.ZodString;
@@ -38,6 +38,9 @@ export declare const automationDomainSpec: {
         };
         readonly runs: {
             readonly valueSchema: z.ZodType<AutomationRun, unknown, z.core.$ZodTypeInternals<AutomationRun, unknown>>;
+        };
+        readonly receipts: {
+            readonly valueSchema: z.ZodType<StoredAutomationCommandReceipt>;
         };
     };
 };

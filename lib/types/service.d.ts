@@ -1,7 +1,7 @@
 /** Durable automation authority: definitions, occurrence claims, clock, and run execution. */
 import type { Context } from '@deepseek-ai/cordis';
 import { type LegacyMigrationSummary } from './legacy.ts';
-import type { AutomationDefinition, AutomationRun, AutomationSchedule, PermissionPreset, UpdateAutomationInput } from './types.ts';
+import type { AutomationDefinition, AutomationCommandReceipt, AutomationModelSelection, ModelPolicy, AutomationRun, AutomationSchedule, PermissionPreset, UpdateAutomationInput } from './types.ts';
 export declare const AUTOMATION_SESSION_PREFIX = "dsh-automation-session-";
 export interface AutomationConfig {
     readonly maxConcurrentRuns: number;
@@ -17,8 +17,31 @@ export interface CreateRequest {
     readonly schedule: AutomationSchedule;
     readonly permissionPreset?: PermissionPreset;
     readonly agentPreset?: string;
+    readonly modelPolicy?: ModelPolicy;
     readonly runTimeoutMinutes?: number;
 }
+type UpdateRequest = Omit<UpdateAutomationInput, 'now'> & {
+    readonly status?: 'active' | 'paused';
+    readonly expectedRevision?: number;
+};
+export type AutomationCommand = {
+    readonly kind: 'create';
+    readonly requestId: string;
+    readonly input: CreateRequest;
+} | {
+    readonly kind: 'update';
+    readonly requestId: string;
+    readonly automationId: string;
+    readonly input: UpdateRequest;
+} | {
+    readonly kind: 'pause' | 'resume' | 'delete' | 'run-now';
+    readonly requestId: string;
+    readonly automationId: string;
+} | {
+    readonly kind: 'cancel-run' | 'mark-read';
+    readonly requestId: string;
+    readonly runId: string;
+};
 export type AutomationScope = {
     readonly sessionId: string;
     readonly creatorKind: 'agent';
@@ -39,6 +62,8 @@ export interface AutomationSnapshot {
         readonly name: string;
         readonly broken: boolean;
     }[];
+    readonly defaultModel: AutomationModelSelection;
+    readonly models: readonly AutomationModelOption[];
     readonly definitions: readonly AutomationDefinitionView[];
     readonly runs: readonly AutomationRunView[];
     readonly migration: LegacyMigrationSummary;
@@ -46,6 +71,23 @@ export interface AutomationSnapshot {
 export interface AutomationDefinitionView extends AutomationDefinition {
     readonly nextRunAt: string | null;
     readonly lastRun: AutomationRun | null;
+    readonly health: AutomationHealth;
+}
+export interface AutomationModelOption extends AutomationModelSelection {
+    readonly providerName: string;
+    readonly modelName: string;
+    readonly reasoningEfforts: readonly {
+        readonly id: string;
+        readonly name: string;
+    }[];
+}
+export interface AutomationHealth {
+    readonly status: 'ready' | 'blocked';
+    readonly issues: readonly {
+        readonly code: string;
+        readonly message: string;
+    }[];
+    readonly effectiveModel: AutomationModelSelection | null;
 }
 export interface AutomationRunView extends AutomationRun {
     readonly sessionArchived: boolean;
@@ -61,12 +103,15 @@ export declare class AutomationService {
     private readonly config;
     private definitions;
     private runs;
+    private receipts;
     private timer;
     private operationTail;
+    private commandTail;
     private pumpScheduled;
     private requested;
     private started;
     private stopping;
+    private readonly ownerId;
     private readonly active;
     private migration;
     private constructor();
@@ -82,19 +127,24 @@ export declare class AutomationService {
     dispose(): Promise<void>;
     snapshot(scope: AutomationScope, signal?: AbortSignal): Promise<AutomationSnapshot>;
     create(scope: AutomationScope, request: CreateRequest, signal?: AbortSignal): Promise<AutomationDefinition>;
-    update(scope: AutomationScope, id: string, input: Omit<UpdateAutomationInput, 'now'> & {
-        readonly status?: 'active' | 'paused';
-        readonly expectedRevision?: number;
-    }, signal?: AbortSignal): Promise<AutomationDefinition>;
+    update(scope: AutomationScope, id: string, input: UpdateRequest, signal?: AbortSignal): Promise<AutomationDefinition>;
     delete(scope: AutomationScope, id: string, signal?: AbortSignal): Promise<{
         readonly id: string;
         readonly deleted: boolean;
     }>;
-    runNow(scope: AutomationScope, id: string, signal?: AbortSignal): Promise<AutomationRun>;
+    runNow(scope: AutomationScope, id: string, signal?: AbortSignal, requestId?: string): Promise<AutomationRun>;
+    dispatch(scope: AutomationScope, command: AutomationCommand, signal?: AbortSignal): Promise<AutomationCommandReceipt>;
+    private applyCommand;
+    private commandErrorCode;
     markRead(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
     cancelRun(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
     private resolveScope;
     private ownedDefinition;
+    private validateModelPolicy;
+    private defaultModelSelection;
+    private llmRuntime;
+    private modelCatalog;
+    private preflightTarget;
     /** Import the old plugin's v1 domain without ever mutating or deleting it. */
     private importLegacyData;
     private requestPump;
@@ -103,6 +153,9 @@ export declare class AutomationService {
     private startQueuedRuns;
     private startRun;
     private executeRun;
+    private newLease;
+    private persistRunPhase;
+    private refreshRunLease;
     private armNextTimer;
     private armRetryTimer;
     private clearTimer;

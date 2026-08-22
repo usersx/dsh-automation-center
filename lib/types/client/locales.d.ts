@@ -33,6 +33,14 @@ export declare const en: {
     readonly 'form.workspace': "Workspace";
     readonly 'form.workspaceEmpty': "Add a workspace in DSH first";
     readonly 'form.agentPreset': "Agent preset";
+    readonly 'form.modelPolicy': "Model policy";
+    readonly 'form.modelInherit': "Follow global default";
+    readonly 'form.modelPinned': "Pin a model";
+    readonly 'form.modelInheritHint': "Uses the current global default at run time: {provider}/{model}.";
+    readonly 'form.provider': "Provider";
+    readonly 'form.model': "Model";
+    readonly 'form.reasoningEffort': "Reasoning effort";
+    readonly 'form.reasoningDefault': "Provider default";
     readonly 'form.timeout': "Run timeout";
     readonly 'form.namePlaceholder': "Daily regression triage";
     readonly 'form.prompt': "Task prompt";
@@ -66,6 +74,7 @@ export declare const en: {
     readonly 'form.error.weekdays': "Select at least one day.";
     readonly 'form.error.workspace': "Choose a registered workspace.";
     readonly 'form.error.preset': "Choose an available Agent preset.";
+    readonly 'form.error.model': "Choose an available provider and model.";
     readonly 'form.error.timeout': "Timeout must be between 1 and 1,440 minutes.";
     readonly 'day.1': "Mon";
     readonly 'day.2': "Tue";
@@ -88,6 +97,13 @@ export declare const en: {
     readonly 'card.never': "Never run";
     readonly 'card.permission.read-only': "Read only";
     readonly 'card.permission.workspace-write': "Workspace write";
+    readonly 'card.modelInherit': "Follows global model";
+    readonly 'card.blocked': "Blocked";
+    readonly 'phase.claim': "Claiming run";
+    readonly 'phase.setup': "Preparing Agent";
+    readonly 'phase.executing': "Agent is working";
+    readonly 'phase.settling': "Collecting result";
+    readonly 'phase.delivery': "Saving result";
     readonly 'schedule.onceAt': "Once · {time}";
     readonly 'schedule.everyMinutes': "Every {count} minutes";
     readonly 'schedule.dailyAt': "Daily · {time}";

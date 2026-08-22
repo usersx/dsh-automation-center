@@ -1,6 +1,6 @@
 /** Fresh-Agent execution boundary for one already-claimed automation run. */
 import type { Context } from '@deepseek-ai/cordis';
-import type { AutomationDefinition, AutomationRun } from './types.ts';
+import type { AutomationDefinition, AutomationRun, AutomationRunPhase } from './types.ts';
 interface SessionEventLike {
     readonly seq: number;
     readonly type: string;
@@ -16,11 +16,17 @@ export interface RunCompletion {
         readonly code: string;
         readonly message: string;
     };
+    readonly effectiveModel?: {
+        readonly provider: string;
+        readonly model: string;
+        readonly reasoningEffort?: string;
+    };
 }
 export interface ExecutorConfig {
     readonly runTimeoutMs: number;
     readonly sessionId: string;
     readonly signal?: AbortSignal;
+    readonly onPhase?: (phase: Extract<AutomationRunPhase, 'executing' | 'settling'>, sideEffectsPossible: true) => Promise<void>;
 }
 /** Last assistant text and closed-turn reason for the interval owned by this run. */
 export declare function summarizeRun(events: readonly SessionEventLike[], firstSeq: number): {
