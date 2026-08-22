@@ -10,7 +10,7 @@ import { registerAutomationTools } from './tools.ts'
 export const name = 'dsh-automation-center'
 export const inject = [
   'storageDomain', 'agents', 'sessions', 'workspaceRegistry', 'agentDefaultModel',
-  'agentPresets', 'sessionTitle', 'tools', 'connection', 'loader',
+  'agentPresets', 'sessionTitle', 'tools', 'connection', 'loader', 'llm',
 ]
 
 export interface Config {

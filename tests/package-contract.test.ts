@@ -33,6 +33,7 @@ test('package keeps the installable DSH bundle and Web client contract', async (
     '@deepseek-ai/dsh-client-ui-layout',
     '@deepseek-ai/dsh-client-ui-sidebar',
     '@deepseek-ai/dsh-client-ui-conversation',
+    '@deepseek-ai/dsh-client-ui-settings',
   ])
   assert.deepEqual(manifest.exports?.['./client'], {
     types: './lib/types/client/index.d.ts',
@@ -64,6 +65,7 @@ test('package keeps the installable DSH bundle and Web client contract', async (
   assert.match(clientBundle, /sessionArchived/)
   assert.match(clientBundle, /conversation\.view/)
   assert.match(clientBundle, /sidebar\.primary\.action/)
+  assert.match(clientBundle, /settings\.section/)
   const hostBundle = await readFile(new URL('lib/index.js', root), 'utf8')
   assert.match(hostBundle, /archiveRunSessions: .*\.boolean\(\)\.default\(false\)/)
   assert.match(hostBundle, /node_modules\/\.pnpm\/luxon@/)

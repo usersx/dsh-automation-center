@@ -1,6 +1,7 @@
 import type { ClientRpc } from './contracts.js'
 import type {
   AutomationSnapshot,
+  AutomationCommandReceipt,
   CancelRunRequest,
   CreateAutomationInput,
   CreateRequest,
@@ -91,16 +92,29 @@ export function createAutomationRuntime(rpc: ClientRpc): AutomationRuntime {
     return refreshPromise
   }
 
-  const mutateThenRefresh = async (endpoint: string, payload: unknown): Promise<void> => {
-    unwrapRpcResult<unknown>(await rpc.call(CHANNEL, endpoint, payload))
+  const mutateThenRefresh = async (endpoint: string, payload: unknown): Promise<AutomationCommandReceipt> => {
+    const receipt = unwrapRpcResult<AutomationCommandReceipt>(await rpc.call(CHANNEL, endpoint, payload))
+    if (receipt.outcome !== 'committed') {
+      const failure = new Error(receipt.error?.message ?? 'The automation result is unknown.')
+      failure.name = receipt.error?.code ?? receipt.outcome
+      if (receipt.outcome === 'unknown') {
+        const pendingBeforeRefresh = refreshPromise
+        if (pendingBeforeRefresh !== undefined) await pendingBeforeRefresh.catch(() => undefined)
+        await refresh().catch(() => undefined)
+      }
+      throw failure
+    }
     // A poll may have started before the mutation completed. Let it settle,
     // then require a post-mutation snapshot instead of accepting stale data.
     const pendingBeforeRefresh = refreshPromise
     if (pendingBeforeRefresh !== undefined) await pendingBeforeRefresh.catch(() => undefined)
     await refresh()
+    return receipt
   }
+  const requestId = (): string => globalThis.crypto?.randomUUID?.()
+    ?? `request_${Date.now()}_${Math.random().toString(36).slice(2)}`
   const markRunRead = async (runId: string): Promise<void> => {
-    const payload: MarkReadRequest = { runId }
+    const payload: MarkReadRequest = { runId, clientRequestId: requestId() }
     await mutateThenRefresh('mark-read', payload)
   }
 
@@ -111,28 +125,28 @@ export function createAutomationRuntime(rpc: ClientRpc): AutomationRuntime {
       const key = JSON.stringify(input)
       let clientRequestId = createRequestIds.get(key)
       if (clientRequestId === undefined) {
-        clientRequestId = globalThis.crypto?.randomUUID?.()
-          ?? `request_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        clientRequestId = requestId()
         createRequestIds.set(key, clientRequestId)
       }
       const payload: CreateRequest = { workspaceId: input.workspaceId, clientRequestId, input }
       await mutateThenRefresh('create', payload)
+      createRequestIds.delete(key)
     },
     async updateAutomation(automationId, expectedRevision, input) {
-      const payload: UpdateRequest = { automationId, expectedRevision, input }
+      const payload: UpdateRequest = { automationId, expectedRevision, input, clientRequestId: requestId() }
       await mutateThenRefresh('update', payload)
     },
     async mutateAutomation(automationId, mutation) {
-      const payload: MutateRequest = { automationId, mutation }
+      const payload: MutateRequest = { automationId, mutation, clientRequestId: requestId() }
       await mutateThenRefresh('mutate', payload)
     },
     async runNow(automationId) {
-      const payload: RunNowRequest = { automationId }
+      const payload: RunNowRequest = { automationId, clientRequestId: requestId() }
       await mutateThenRefresh('run-now', payload)
     },
     markRunRead,
     async cancelRun(runId) {
-      const payload: CancelRunRequest = { runId }
+      const payload: CancelRunRequest = { runId, clientRequestId: requestId() }
       await mutateThenRefresh('cancel-run', payload)
     },
     async openRunSession(runId, open) {

@@ -14,10 +14,10 @@ DSH Automation Center adds scheduled, auditable Agent runs to [DeepSeek Harness]
 
 The same package selects the deepest native surface available, without DOM injection or Sidebar replacement:
 
-- **Stock compatibility mode:** unmodified DSH `0.1.0-rc.8` registers an **Automation** Conversation tab. No Shell Page Patch is required.
+- **Stock compatibility mode:** unmodified DSH `0.1.0-rc.8` exposes a global **Settings → Automations** section that works without a Session; the **Automation** Conversation tab remains a shortcut. No Shell Page Patch is required.
 - **Global center mode:** when DSH exposes `sidebar.primary.action` and `shell.page`, the plugin automatically moves to a root action below **New Session** and above **Workspaces**.
 
-> Current version: `0.1.0-alpha.5`. Compatibility validation is not a security audit.
+> Current version: `0.1.0-alpha.6`. Compatibility validation is not a security audit.
 
 ## Install from npm
 
@@ -34,7 +34,7 @@ dsh plugin --profile desktop add dsh-automation-center@latest
 Use a fixed version for reproducible installs:
 
 ```sh
-dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.5
+dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.6
 ```
 
 Fully quit and reopen DSH after installation. Use Node.js `^22.19.0` or `>=24.0.0`. Remove or disable `@dsh-external/dsh-automation`; when both schedulers are present, this plugin reports `AUTOMATION_PLUGIN_CONFLICT` instead of scheduling twice.
@@ -47,8 +47,12 @@ Fully quit and reopen DSH after installation. Use Node.js `^22.19.0` or `>=24.0.
 - A fresh root Agent and Session for every occurrence; chat sessions are never reused.
 - Result Session titles derived from the automation task rather than the project.
 - Read-only and workspace-write unattended policies.
-- Idempotent creation, overlap protection, deterministic claims, bounded misfire handling and restart recovery.
-- Durable history, summaries, Result Session links and structured error codes.
+- Per-automation model policy: inherit the live DSH default, or pin provider, model and reasoning effort; every Run records the effective model.
+- Workspace, preset and model preflight exposes blocked definitions before a useless Session is created.
+- Idempotent commands, overlap protection, deterministic claims, bounded misfire handling and conservative restart recovery.
+- Supervisor phases, lease heartbeats and a whole-job deadline covering preflight through delivery.
+- Durable write receipts with request ID, revision and `committed | rejected | unknown` outcomes, followed by an authoritative Client read.
+- Durable history, summaries, Result Session links, effective model and structured error codes.
 - Read-only migration from legacy `dsh_automation` v1 data.
 
 ## Original DeepSeek UI
@@ -82,7 +86,7 @@ The following three screenshots show **global center mode** when both Shell slot
 
 ```text
 DSH Surface Adapter
-  ├─ stock rc.8: conversation.view
+  ├─ stock rc.8: settings.section + conversation.view shortcut
   └─ enhanced: sidebar.primary.action + shell.page
                          │
                          ▼
@@ -101,14 +105,14 @@ The Host-side `AutomationEngine` is the deep module. Both Client adapters, loopb
 
 | Target | Install | Surface | Status |
 |---|---|---|---|
-| stock DSH `0.1.0-rc.8` / Web | no patch | Conversation tab | isolated runtime observed pass; see the acceptance record |
-| stock DSH `0.1.0-rc.8` / Desktop | no patch | Conversation tab | rc.8 Desktop re-validation pending |
+| stock DSH `0.1.0-rc.8` / Web | no patch | global Settings section + Conversation shortcut | alpha.5 Conversation mode observed pass; alpha.6 Settings contract automated, runtime re-validation pending |
+| stock DSH `0.1.0-rc.8` / Desktop | no patch | global Settings section + Conversation shortcut | rc.8 Desktop re-validation pending |
 | DSH exposing both Shell slots / Web | same package | global root page | observed pass |
 | native Windows / Linux Desktop | — | selected from target capability | not yet observed |
 
-Stock rc.8 has no `sidebar.primary.action` or `shell.page`, so a plugin cannot add a true root action through public APIs. This project deliberately avoids a brittle DOM-injection imitation. Once the generic slots land upstream, the same npm package enables global center mode automatically.
+Stock rc.8 has no `sidebar.primary.action` or `shell.page`, so a plugin cannot add a true Sidebar root action through public APIs. It can still provide global management through the native `settings.section`. This project deliberately avoids a brittle DOM-injection imitation. Once the generic Shell slots land upstream, the same npm package enables Sidebar global-center mode automatically.
 
-See the exact [acceptance results](docs/acceptance-results-2026-08-20.md), including blocked and unrun cases.
+See the exact [alpha.6 acceptance results](docs/acceptance-results-2026-08-23-alpha.6.md), including blocked and unrun cases. The [alpha.5 record](docs/acceptance-results-2026-08-20.md) remains the observed runtime baseline.
 
 ## Safety boundaries
 
@@ -143,7 +147,7 @@ CI runs typecheck, tests, build and repository validation on Linux, macOS and Wi
 
 ## Known limitations
 
-- Stock rc.8 can only host the Session-scoped tab; a root action requires the two generic upstream slots.
+- Stock rc.8 provides global management in Settings; a Sidebar root action still requires the two generic upstream slots.
 - The first release has no distributed scheduler, remote workers or cloud credential vault.
 - Cancellation cannot undo file changes or external calls that already occurred.
 - This remains an Alpha; stable release gates are defined in the acceptance documents.

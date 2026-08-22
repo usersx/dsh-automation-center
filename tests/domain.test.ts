@@ -18,10 +18,10 @@ const definition = () => createDefinition({
   now: '2026-08-13T00:00:00Z',
 })
 
-test('domain declaration owns definitions and runs at version one', () => {
+test('domain declaration owns definitions, runs, and durable command receipts', () => {
   assert.equal(automationDomainSpec.name, 'dsh_automation_center')
   assert.equal(automationDomainSpec.version, 1)
-  assert.deepEqual(Object.keys(automationDomainSpec.tables).sort(), ['definitions', 'runs'])
+  assert.deepEqual(Object.keys(automationDomainSpec.tables).sort(), ['definitions', 'receipts', 'runs'])
 })
 
 test('creation derives canonical RRULE and rejects inconsistent stored records', () => {
@@ -32,6 +32,36 @@ test('creation derives canonical RRULE and rejects inconsistent stored records',
   assert.equal(automationDefinitionSchema.safeParse(value).success, true)
   assert.equal(automationDefinitionSchema.safeParse({ ...value, rrule: 'RRULE:FREQ=HOURLY' }).success, false)
   assert.equal(automationDefinitionSchema.safeParse({ ...value, timeZone: 'Europe/Paris' }).success, false)
+})
+
+test('model policy is explicit and every run snapshots the requested selection', () => {
+  const inherited = definition()
+  assert.deepEqual(inherited.modelPolicy, { mode: 'inherit' })
+  assert.deepEqual(createManualRun(inherited, '2026-08-14T01:00:00Z', 'inherit').targetSnapshot.modelPolicy, {
+    mode: 'inherit',
+  })
+
+  const pinned = createDefinition({
+    id: 'automation-pinned-model',
+    name: 'Pinned model',
+    prompt: 'Use the selected model for this task.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1',
+    cwd: '/workspace/repo',
+    agentPreset: 'coding',
+    modelPolicy: {
+      mode: 'pinned',
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+      reasoningEffort: 'high',
+    },
+    createdBy: { kind: 'web', sessionId: 'web:workspace-1' },
+    now: '2026-08-13T00:00:00Z',
+  })
+  assert.deepEqual(pinned.modelPolicy, {
+    mode: 'pinned', provider: 'deepseek', model: 'deepseek-reasoner', reasoningEffort: 'high',
+  })
+  assert.deepEqual(createManualRun(pinned, '2026-08-14T01:00:00Z', 'pinned').targetSnapshot.modelPolicy, pinned.modelPolicy)
 })
 
 test('update and status transitions are immutable, revisioned pure transforms', () => {
@@ -66,6 +96,8 @@ test('scheduled occurrence id is deterministic while manual runs require a nonce
   assert.equal(first.id, duplicate.id)
   assert.equal(first.id, runIdForOccurrence(first.occurrenceKey))
   assert.equal(automationRunSchema.safeParse(first).success, true)
+  assert.equal(first.phase, 'claim')
+  assert.equal(first.lease, null)
 
   const manualOne = createManualRun(value, '2026-08-14T01:00:00Z', 'click-1')
   const manualTwo = createManualRun(value, '2026-08-14T01:00:00Z', 'click-2')

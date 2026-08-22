@@ -1,7 +1,7 @@
 /** Loopback-only Host RPC adapter for the Automation Web client. */
 
 import type { AutomationService } from './service.ts'
-import type { AutomationSchedule as DomainSchedule, Weekday } from './types.ts'
+import type { AutomationSchedule as DomainSchedule, ModelPolicy, Weekday } from './types.ts'
 
 const WEEKDAYS: readonly Weekday[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
 
@@ -84,6 +84,21 @@ function toClientSchedule(schedule: DomainSchedule): Record<string, unknown> {
   }
 }
 
+function toModelPolicy(raw: unknown): ModelPolicy {
+  const policy = record(raw, 'input.modelPolicy')
+  const mode = string(policy.mode, 'input.modelPolicy.mode')
+  if (mode === 'inherit') return { mode }
+  if (mode !== 'pinned') throw new Error('input.modelPolicy.mode must be inherit or pinned')
+  return {
+    mode,
+    provider: string(policy.provider, 'input.modelPolicy.provider'),
+    model: string(policy.model, 'input.modelPolicy.model'),
+    ...(policy.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: string(policy.reasoningEffort, 'input.modelPolicy.reasoningEffort') }),
+  }
+}
+
 function errorResult(
   error: unknown,
   aborted = false,
@@ -123,6 +138,8 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
     filterWorkspaceId: snapshot.filterWorkspaceId,
     workspaces: snapshot.workspaces,
     presets: snapshot.presets,
+    defaultModel: snapshot.defaultModel,
+    models: snapshot.models,
     automations: snapshot.definitions.map(definition => ({
       id: definition.id,
       revision: definition.revision,
@@ -137,6 +154,14 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
       workspaceId: definition.workspaceId,
       workspaceName: snapshot.workspaces.find(item => item.id === definition.workspaceId)?.title ?? definition.workspaceId,
       agentPreset: definition.agentPreset,
+      modelPolicy: definition.modelPolicy,
+      health: {
+        status: definition.health.status,
+        issues: definition.health.issues,
+        ...(definition.health.effectiveModel == null
+          ? {}
+          : { effectiveModel: definition.health.effectiveModel }),
+      },
       runTimeoutMinutes: definition.runTimeoutMinutes,
       ...(definition.nextRunAt === null ? {} : { nextRunAt: definition.nextRunAt }),
       ...(definition.lastRun === null ? {} : {
@@ -151,6 +176,13 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
       automationId: run.automationId,
       automationName: names.get(run.automationId) ?? 'Deleted automation',
       status: run.status,
+      ...(run.phase == null ? {} : { phase: run.phase }),
+      ...(run.lease == null ? {} : {
+        heartbeatAt: run.lease.heartbeatAt,
+        leaseExpiresAt: run.lease.expiresAt,
+        sideEffectsPossible: run.lease.sideEffectsPossible,
+      }),
+      ...(run.effectiveModel == null ? {} : { effectiveModel: run.effectiveModel }),
       trigger: run.trigger,
       scheduledFor: run.scheduledFor,
       ...(run.startedAt === null ? {} : { startedAt: run.startedAt }),
@@ -186,16 +218,20 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
           const runTimeoutMinutes = input.runTimeoutMinutes === undefined
             ? undefined
             : positiveInteger(input.runTimeoutMinutes, 'input.runTimeoutMinutes')
-          const value = await service.create(scopeOf(payload), {
-            clientRequestId: string(payload.clientRequestId, 'clientRequestId'),
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: 'create',
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            input: {
             name: string(input.name, 'input.name'),
             prompt: string(input.prompt, 'input.prompt'),
             schedule: toDomainSchedule(input.schedule, timeZone),
             permissionPreset: permission,
+            ...(input.modelPolicy === undefined ? {} : { modelPolicy: toModelPolicy(input.modelPolicy) }),
             ...(agentPreset === undefined ? {} : { agentPreset }),
             ...(runTimeoutMinutes === undefined ? {} : { runTimeoutMinutes }),
+            },
           }, signal)
-          return { ok: true, value: { id: value.id, revision: value.revision } }
+          return { ok: true, value: receipt }
         }
         case 'update': {
           const id = string(payload.automationId, 'automationId')
@@ -207,6 +243,7 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
             schedule?: DomainSchedule
             permissionPreset?: 'read-only' | 'workspace-write'
             agentPreset?: string
+            modelPolicy?: ModelPolicy
             runTimeoutMinutes?: number
           } = {
             expectedRevision: positiveInteger(payload.expectedRevision, 'expectedRevision'),
@@ -227,37 +264,54 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
             value.permissionPreset = permission
           }
           if (input.agentPreset !== undefined) value.agentPreset = string(input.agentPreset, 'input.agentPreset')
+          if (input.modelPolicy !== undefined) value.modelPolicy = toModelPolicy(input.modelPolicy)
           if (input.runTimeoutMinutes !== undefined) {
             value.runTimeoutMinutes = positiveInteger(input.runTimeoutMinutes, 'input.runTimeoutMinutes')
           }
-          const updated = await service.update(scopeOf(payload), id, value, signal)
-          return { ok: true, value: { id: updated.id, revision: updated.revision } }
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: 'update',
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            automationId: id,
+            input: value,
+          }, signal)
+          return { ok: true, value: receipt }
         }
         case 'mutate': {
           const id = string(payload.automationId, 'automationId')
           const mutation = string(payload.mutation, 'mutation')
-          if (mutation === 'delete') {
-            return { ok: true, value: await service.delete(scopeOf(payload), id, signal) }
-          }
-          if (mutation !== 'pause' && mutation !== 'resume') {
+          if (mutation !== 'pause' && mutation !== 'resume' && mutation !== 'delete') {
             throw new Error('mutation must be pause, resume, or delete')
           }
-          const value = await service.update(scopeOf(payload), id, {
-            status: mutation === 'pause' ? 'paused' : 'active',
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: mutation,
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            automationId: id,
           }, signal)
-          return { ok: true, value: { id: value.id, revision: value.revision } }
+          return { ok: true, value: receipt }
         }
         case 'run-now': {
-          const run = await service.runNow(scopeOf(payload), string(payload.automationId, 'automationId'), signal)
-          return { ok: true, value: { runId: run.id } }
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: 'run-now',
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            automationId: string(payload.automationId, 'automationId'),
+          }, signal)
+          return { ok: true, value: receipt }
         }
         case 'mark-read': {
-          const run = await service.markRead(scopeOf(payload), string(payload.runId, 'runId'), signal)
-          return { ok: true, value: { runId: run.id, unread: run.unread } }
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: 'mark-read',
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            runId: string(payload.runId, 'runId'),
+          }, signal)
+          return { ok: true, value: receipt }
         }
         case 'cancel-run': {
-          const run = await service.cancelRun(scopeOf(payload), string(payload.runId, 'runId'), signal)
-          return { ok: true, value: { runId: run.id, status: run.status } }
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: 'cancel-run',
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            runId: string(payload.runId, 'runId'),
+          }, signal)
+          return { ok: true, value: receipt }
         }
         default:
           throw new Error(`unknown automation endpoint '${endpoint}'`)

@@ -25,6 +25,10 @@ export interface AutomationFormState {
   readonly permission: CreateAutomationInput['permission']
   readonly workspaceId: string
   readonly agentPreset: string
+  readonly modelMode: 'inherit' | 'pinned'
+  readonly modelProvider: string
+  readonly model: string
+  readonly reasoningEffort: string
   readonly runTimeoutMinutes: string
 }
 
@@ -36,6 +40,7 @@ export type FormErrorKey =
   | 'form.error.weekdays'
   | 'form.error.workspace'
   | 'form.error.preset'
+  | 'form.error.model'
   | 'form.error.timeout'
 
 export class AutomationFormError extends Error {
@@ -66,6 +71,10 @@ export function defaultFormState(
     permission: 'read-only',
     workspaceId,
     agentPreset,
+    modelMode: 'inherit',
+    modelProvider: '',
+    model: '',
+    reasoningEffort: '',
     runTimeoutMinutes: '60',
   }
 }
@@ -96,6 +105,12 @@ export function formStateFromAutomation(automation: AutomationViewModel): Automa
     permission: automation.permission,
     workspaceId: automation.workspaceId,
     agentPreset: automation.agentPreset,
+    modelMode: automation.modelPolicy.mode,
+    modelProvider: automation.modelPolicy.mode === 'pinned' ? automation.modelPolicy.provider : '',
+    model: automation.modelPolicy.mode === 'pinned' ? automation.modelPolicy.model : '',
+    reasoningEffort: automation.modelPolicy.mode === 'pinned'
+      ? automation.modelPolicy.reasoningEffort ?? ''
+      : '',
     runTimeoutMinutes: String(automation.runTimeoutMinutes),
   }
 }
@@ -107,6 +122,9 @@ export function buildCreateInput(form: AutomationFormState, now = new Date()): C
   if (prompt === '') throw new AutomationFormError('form.error.prompt')
   if (form.workspaceId === '') throw new AutomationFormError('form.error.workspace')
   if (form.agentPreset === '') throw new AutomationFormError('form.error.preset')
+  if (form.modelMode === 'pinned' && (form.modelProvider.trim() === '' || form.model.trim() === '')) {
+    throw new AutomationFormError('form.error.model')
+  }
   const runTimeoutMinutes = Number(form.runTimeoutMinutes)
   if (!Number.isInteger(runTimeoutMinutes) || runTimeoutMinutes < 1 || runTimeoutMinutes > 1_440) {
     throw new AutomationFormError('form.error.timeout')
@@ -147,6 +165,14 @@ export function buildCreateInput(form: AutomationFormState, now = new Date()): C
     name, prompt, schedule, timeZone: form.timeZone, permission: form.permission,
     workspaceId: form.workspaceId,
     agentPreset: form.agentPreset,
+    modelPolicy: form.modelMode === 'inherit'
+      ? { mode: 'inherit' }
+      : {
+          mode: 'pinned',
+          provider: form.modelProvider,
+          model: form.model,
+          ...(form.reasoningEffort === '' ? {} : { reasoningEffort: form.reasoningEffort }),
+        },
     runTimeoutMinutes,
   }
 }
@@ -206,6 +232,9 @@ export function buildUpdateInput(
   if (name === '') throw new AutomationFormError('form.error.name')
   if (prompt === '') throw new AutomationFormError('form.error.prompt')
   if (form.agentPreset === '') throw new AutomationFormError('form.error.preset')
+  if (form.modelMode === 'pinned' && (form.modelProvider.trim() === '' || form.model.trim() === '')) {
+    throw new AutomationFormError('form.error.model')
+  }
   const runTimeoutMinutes = Number(form.runTimeoutMinutes)
   if (!Number.isInteger(runTimeoutMinutes) || runTimeoutMinutes < 1 || runTimeoutMinutes > 1_440) {
     throw new AutomationFormError('form.error.timeout')
@@ -222,6 +251,21 @@ export function buildUpdateInput(
     }),
     ...(form.permission === automation.permission ? {} : { permission: form.permission }),
     ...(form.agentPreset === automation.agentPreset ? {} : { agentPreset: form.agentPreset }),
+    ...(JSON.stringify(form.modelMode === 'inherit'
+      ? { mode: 'inherit' }
+      : {
+          mode: 'pinned', provider: form.modelProvider, model: form.model,
+          ...(form.reasoningEffort === '' ? {} : { reasoningEffort: form.reasoningEffort }),
+        }) === JSON.stringify(automation.modelPolicy)
+      ? {}
+      : {
+          modelPolicy: form.modelMode === 'inherit'
+            ? { mode: 'inherit' as const }
+            : {
+                mode: 'pinned' as const, provider: form.modelProvider, model: form.model,
+                ...(form.reasoningEffort === '' ? {} : { reasoningEffort: form.reasoningEffort }),
+              },
+        }),
     ...(runTimeoutMinutes === automation.runTimeoutMinutes
       ? {}
       : { runTimeoutMinutes }),

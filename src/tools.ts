@@ -1,8 +1,9 @@
 /** Agent-scoped management tools over the host-wide AutomationService. */
 
+import { randomUUID } from 'node:crypto'
 import { defineTool, type JsonValue, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { AutomationService } from './service.ts'
-import type { AutomationSchedule, PermissionPreset, Weekday } from './types.ts'
+import type { AutomationCommandReceipt, AutomationSchedule, ModelPolicy, PermissionPreset, Weekday } from './types.ts'
 
 interface ToolAgent {
   readonly id: string
@@ -28,6 +29,10 @@ interface CreateArgs extends ScheduleArgs {
   readonly kind: 'once' | 'interval' | 'daily' | 'weekly'
   readonly time_zone: string
   readonly permission?: PermissionPreset
+  readonly model_mode?: 'inherit' | 'pinned'
+  readonly provider?: string
+  readonly model?: string
+  readonly reasoning_effort?: string
 }
 
 interface UpdateArgs extends ScheduleArgs {
@@ -36,6 +41,10 @@ interface UpdateArgs extends ScheduleArgs {
   readonly prompt?: string
   readonly status?: 'active' | 'paused'
   readonly permission?: PermissionPreset
+  readonly model_mode?: 'inherit' | 'pinned'
+  readonly provider?: string
+  readonly model?: string
+  readonly reasoning_effort?: string
 }
 
 interface IdArgs { readonly id: string }
@@ -57,6 +66,40 @@ function json(value: unknown): JsonValue {
 
 function present(title: string, kind: 'read' | 'other', rawInput?: unknown) {
   return { card: 'generic' as const, title, kind, ...(rawInput === undefined ? {} : { rawInput }) }
+}
+
+function requestId(kind: string, exec: ToolRunContext): string {
+  const callId = (exec as unknown as { readonly callId?: string }).callId
+  return `agent-${kind}-${callId === undefined ? randomUUID() : String(callId)}`
+}
+
+function commandResult(receipt: AutomationCommandReceipt): JsonValue {
+  return json({ ok: receipt.outcome === 'committed', receipt })
+}
+
+function modelPolicyFromArgs(args: {
+  readonly model_mode?: 'inherit' | 'pinned'
+  readonly provider?: string
+  readonly model?: string
+  readonly reasoning_effort?: string
+}, defaultToInherit: boolean): ModelPolicy | undefined {
+  const hasSelection = args.provider !== undefined || args.model !== undefined || args.reasoning_effort !== undefined
+  if (args.model_mode === undefined) {
+    if (hasSelection) throw new Error('model_mode is required when changing model fields')
+    return defaultToInherit ? { mode: 'inherit' } : undefined
+  }
+  if (args.model_mode === 'inherit') {
+    if (hasSelection) throw new Error('inherit model policy does not accept provider, model, or reasoning_effort')
+    return { mode: 'inherit' }
+  }
+  const provider = args.provider?.trim()
+  const model = args.model?.trim()
+  if (!provider || !model) throw new Error('pinned model policy requires provider and model')
+  const reasoningEffort = args.reasoning_effort?.trim()
+  return {
+    mode: 'pinned', provider, model,
+    ...(reasoningEffort === undefined || reasoningEffort === '' ? {} : { reasoningEffort }),
+  }
 }
 
 function validateScheduleSelector(args: ScheduleArgs): void {
@@ -118,19 +161,27 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
         time: { type: 'string', description: 'Local HH:mm for daily or weekly.' },
         weekdays: { type: 'array', items: { type: 'string', enum: WEEKDAYS } },
         permission: { type: 'string', enum: ['read-only', 'workspace-write'] },
+        model_mode: { type: 'string', enum: ['inherit', 'pinned'], description: 'Inherit the current DSH default model at run time, or pin one exact provider/model.' },
+        provider: { type: 'string', description: 'Required when model_mode is pinned.' },
+        model: { type: 'string', description: 'Required when model_mode is pinned.' },
+        reasoning_effort: { type: 'string', description: 'Optional reasoning effort for a pinned model.' },
       },
       output: JSON_OUTPUT,
       async execute(args: CreateArgs, exec: ToolRunContext) {
         if (exec.agent !== agent || exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
         try {
           const now = new Date().toISOString()
-          const value = await service.create(scope, {
-            name: args.name,
-            prompt: args.prompt,
-            schedule: scheduleFromArgs(args, now),
-            permissionPreset: args.permission ?? 'read-only',
+          const receipt = await service.dispatch(scope, {
+            kind: 'create', requestId: requestId('create', exec),
+            input: {
+              name: args.name,
+              prompt: args.prompt,
+              schedule: scheduleFromArgs(args, now),
+              permissionPreset: args.permission ?? 'read-only',
+              modelPolicy: modelPolicyFromArgs(args, true) ?? { mode: 'inherit' },
+            },
           }, exec.signal)
-          return json({ ok: true, automation: value })
+          return commandResult(receipt)
         } catch (error: unknown) {
           if (exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
           return json({ ok: false, code: 'invalid_automation', message: error instanceof Error ? error.message : String(error) })
@@ -171,6 +222,10 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
         time: { type: 'string' },
         weekdays: { type: 'array', items: { type: 'string', enum: WEEKDAYS } },
         permission: { type: 'string', enum: ['read-only', 'workspace-write'] },
+        model_mode: { type: 'string', enum: ['inherit', 'pinned'] },
+        provider: { type: 'string' },
+        model: { type: 'string' },
+        reasoning_effort: { type: 'string' },
       },
       output: JSON_OUTPUT,
       async execute(args: UpdateArgs, exec: ToolRunContext) {
@@ -183,15 +238,20 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
             status?: 'active' | 'paused'
             schedule?: AutomationSchedule
             permissionPreset?: PermissionPreset
+            modelPolicy?: ModelPolicy
           } = {}
           if (args.name !== undefined) input.name = String(args.name)
           if (args.prompt !== undefined) input.prompt = String(args.prompt)
           if (args.status !== undefined) input.status = args.status as 'active' | 'paused'
           if (args.permission !== undefined) input.permissionPreset = args.permission as PermissionPreset
+          const modelPolicy = modelPolicyFromArgs(args, false)
+          if (modelPolicy !== undefined) input.modelPolicy = modelPolicy
           if (args.kind !== undefined) input.schedule = scheduleFromArgs(args, new Date().toISOString())
           if (Object.keys(input).length === 0) throw new Error('automation_update requires at least one changed field')
-          const value = await service.update(scope, args.id, input, exec.signal)
-          return json({ ok: true, automation: value })
+          const receipt = await service.dispatch(scope, {
+            kind: 'update', requestId: requestId('update', exec), automationId: args.id, input,
+          }, exec.signal)
+          return commandResult(receipt)
         } catch (error: unknown) {
           if (exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
           return json({ ok: false, code: 'automation_error', message: error instanceof Error ? error.message : String(error) })
@@ -226,7 +286,9 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
       async execute(args: IdArgs, exec: ToolRunContext) {
         if (exec.agent !== agent || exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
         try {
-          return json({ ok: true, run: await service.runNow(scope, args.id, exec.signal) })
+          return commandResult(await service.dispatch(scope, {
+            kind: 'run-now', requestId: requestId('run-now', exec), automationId: args.id,
+          }, exec.signal))
         } catch (error: unknown) {
           if (exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
           return json({ ok: false, code: 'automation_error', message: error instanceof Error ? error.message : String(error) })
@@ -243,7 +305,9 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
       async execute(args: IdArgs, exec: ToolRunContext) {
         if (exec.agent !== agent || exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
         try {
-          return json({ ok: true, value: await service.delete(scope, args.id, exec.signal) })
+          return commandResult(await service.dispatch(scope, {
+            kind: 'delete', requestId: requestId('delete', exec), automationId: args.id,
+          }, exec.signal))
         } catch (error: unknown) {
           if (exec.signal.aborted) return json({ ok: false, code: 'cancelled' })
           return json({ ok: false, code: 'automation_error', message: error instanceof Error ? error.message : String(error) })

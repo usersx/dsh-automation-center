@@ -30,6 +30,7 @@ import {
 import type {
   AutomationRunStatus,
   AutomationRunViewModel,
+  AutomationModelOption,
   AutomationViewModel,
   CreateAutomationInput,
   UpdateAutomationInput,
@@ -79,6 +80,8 @@ interface FormCommonProps {
   readonly onCancel: () => void
   readonly workspaces: readonly { readonly id: string; readonly title: string; readonly path: string }[]
   readonly presets: readonly { readonly id: string; readonly name: string; readonly broken: boolean }[]
+  readonly defaultModel: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
+  readonly models: readonly AutomationModelOption[]
 }
 
 type AutomationFormProps = FormCommonProps & ({
@@ -91,7 +94,7 @@ type AutomationFormProps = FormCommonProps & ({
 })
 
 function AutomationForm(props: AutomationFormProps): JSX.Element {
-  const { t, busy, onCancel, workspaces, presets } = props
+  const { t, busy, onCancel, workspaces, presets, defaultModel, models } = props
   const [form, setForm] = useState<AutomationFormState>(() => props.mode === 'create'
     ? defaultFormState(
         new Date(),
@@ -101,6 +104,11 @@ function AutomationForm(props: AutomationFormProps): JSX.Element {
     : formStateFromAutomation(props.automation))
   const [validationError, setValidationError] = useState<string>()
   const nextPreview = useMemo(() => previewNextRun(form), [form])
+  const providers = useMemo(() => [...new Map(models.map(model => [model.provider, {
+    id: model.provider, name: model.providerName,
+  }])).values()], [models])
+  const providerModels = models.filter(model => model.provider === form.modelProvider)
+  const selectedModel = providerModels.find(model => model.model === form.model)
 
   const update = <Key extends keyof AutomationFormState>(key: Key, value: AutomationFormState[Key]): void => {
     setForm(current => ({ ...current, [key]: value }))
@@ -110,6 +118,23 @@ function AutomationForm(props: AutomationFormProps): JSX.Element {
     update('weekdays', form.weekdays.includes(day)
       ? form.weekdays.filter(value => value !== day)
       : [...form.weekdays, day])
+  }
+  const setModelMode = (mode: 'inherit' | 'pinned'): void => {
+    if (mode === 'inherit') {
+      setForm(current => ({
+        ...current, modelMode: mode, modelProvider: '', model: '', reasoningEffort: '',
+      }))
+      return
+    }
+    const selected = models.find(model => model.provider === defaultModel.provider && model.model === defaultModel.model)
+      ?? models[0]
+    setForm(current => ({
+      ...current,
+      modelMode: mode,
+      modelProvider: selected?.provider ?? defaultModel.provider,
+      model: selected?.model ?? defaultModel.model,
+      reasoningEffort: defaultModel.reasoningEffort ?? '',
+    }))
   }
   const submit = (event: FormEvent): void => {
     event.preventDefault()
@@ -167,6 +192,58 @@ function AutomationForm(props: AutomationFormProps): JSX.Element {
             <span>{t('form.minutes')}</span>
           </span>
         </label>
+        <fieldset className="dsh-automation-fieldset dsh-automation-field--wide">
+          <legend>{t('form.modelPolicy')}</legend>
+          <div className="dsh-automation-segmented dsh-automation-segmented--two">
+            {(['inherit', 'pinned'] as const).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                className={form.modelMode === mode ? 'is-selected' : ''}
+                aria-pressed={form.modelMode === mode}
+                onClick={() => setModelMode(mode)}
+              >
+                {t(mode === 'inherit' ? 'form.modelInherit' : 'form.modelPinned')}
+              </button>
+            ))}
+          </div>
+          {form.modelMode === 'inherit' ? (
+            <p className="dsh-automation-model-hint">{t('form.modelInheritHint', {
+              provider: defaultModel.provider, model: defaultModel.model,
+            })}</p>
+          ) : (
+            <div className="dsh-automation-model-grid">
+              <label className="dsh-automation-field">
+                <span>{t('form.provider')}</span>
+                <select value={form.modelProvider} onChange={(event) => {
+                  const provider = event.currentTarget.value
+                  const first = models.find(model => model.provider === provider)
+                  setForm(current => ({
+                    ...current, modelProvider: provider, model: first?.model ?? '', reasoningEffort: '',
+                  }))
+                }}>
+                  {providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+                </select>
+              </label>
+              <label className="dsh-automation-field">
+                <span>{t('form.model')}</span>
+                <select value={form.model} onChange={event => {
+                  update('model', event.currentTarget.value)
+                  update('reasoningEffort', '')
+                }}>
+                  {providerModels.map(model => <option key={model.model} value={model.model}>{model.modelName}</option>)}
+                </select>
+              </label>
+              <label className="dsh-automation-field">
+                <span>{t('form.reasoningEffort')}</span>
+                <select value={form.reasoningEffort} onChange={event => update('reasoningEffort', event.currentTarget.value)}>
+                  <option value="">{t('form.reasoningDefault')}</option>
+                  {selectedModel?.reasoningEfforts.map(effort => <option key={effort.id} value={effort.id}>{effort.name}</option>)}
+                </select>
+              </label>
+            </div>
+          )}
+        </fieldset>
         <label className="dsh-automation-field dsh-automation-field--wide">
           <span>{t('form.prompt')}</span>
           <textarea value={form.prompt} maxLength={12_000} rows={props.mode === 'edit' ? 8 : 4} placeholder={t('form.promptPlaceholder')} onChange={event => update('prompt', event.currentTarget.value)} />
@@ -296,6 +373,14 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
               <span className="dsh-automation-permission-badge"><ShieldIcon />{t(`card.permission.${automation.permission}`)}</span>
               <span className="dsh-automation-permission-badge">{automation.workspaceName}</span>
               <span className="dsh-automation-permission-badge">{automation.agentPreset} · {automation.runTimeoutMinutes}m</span>
+              <span className="dsh-automation-permission-badge">
+                {automation.modelPolicy.mode === 'inherit'
+                  ? t('card.modelInherit')
+                  : `${automation.modelPolicy.provider}/${automation.modelPolicy.model}`}
+              </span>
+              {automation.health.status === 'blocked' && (
+                <span className="dsh-automation-health-badge">{t('card.blocked')}</span>
+              )}
             </div>
           </div>
         </div>
@@ -303,6 +388,12 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
       </div>
 
       <p className="dsh-automation-prompt">{automation.prompt}</p>
+      {automation.health.status === 'blocked' && (
+        <div className="dsh-automation-health" role="status">
+          <AlertIcon />
+          <span>{automation.health.issues.map(issue => issue.message).join(' ')}</span>
+        </div>
+      )}
       <details className="dsh-automation-prompt-details">
         <summary>{t('card.viewPrompt')}</summary>
         <pre>{automation.prompt}</pre>
@@ -340,7 +431,7 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
           <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onEdit(automation)} disabled={isBusy}>
             <PencilIcon />{t('card.edit')}
           </button>
-          <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onRun(automation.id)} disabled={isBusy}>
+          <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onRun(automation.id)} disabled={isBusy || automation.health.status === 'blocked'} title={automation.health.issues[0]?.message}>
             <PlayIcon />{t('card.runNow')}
           </button>
           <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onMutate(automation.id, automation.status === 'active' ? 'pause' : 'resume')} disabled={isBusy}>
@@ -379,6 +470,12 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
         <time dateTime={timestamp}>{formatRelativeTime(timestamp, now, t)}</time>
       </div>
       <RunStatusBadge status={run.status} t={t} />
+      {run.phase !== undefined && (
+        <span className="dsh-automation-run-phase">{t(`phase.${run.phase}`)}</span>
+      )}
+      {run.effectiveModel !== undefined && (
+        <span className="dsh-automation-run-model">{run.effectiveModel.provider}/{run.effectiveModel.model}{run.effectiveModel.reasoningEffort === undefined ? '' : ` · ${run.effectiveModel.reasoningEffort}`}</span>
+      )}
       {(run.summary !== undefined || run.error !== undefined) && (
         <p className={run.error === undefined ? '' : 'is-error'}>{run.error ?? run.summary}</p>
       )}
@@ -529,7 +626,7 @@ export function AutomationView({
             <p>{t('header.subtitle')}</p>
           </div>
         </div>
-        <button className="dsh-automation-button dsh-automation-button--primary" type="button" onClick={() => {
+        <button className="dsh-automation-button dsh-automation-button--primary" type="button" disabled={snapshot.workspaces.length === 0} title={snapshot.workspaces.length === 0 ? t('form.workspaceEmpty') : undefined} onClick={() => {
           setEditingAutomation(undefined)
           setShowCreate(value => !value)
         }}>
@@ -562,7 +659,7 @@ export function AutomationView({
 
       {showCreate && (
         <AutomationForm
-          mode="create" t={t} workspaces={snapshot.workspaces} presets={snapshot.presets}
+          mode="create" t={t} workspaces={snapshot.workspaces} presets={snapshot.presets} models={snapshot.models} defaultModel={snapshot.defaultModel}
           busy={busyKey === actionKey('create')} onCancel={() => setShowCreate(false)} onSubmit={onCreate}
         />
       )}
@@ -574,6 +671,8 @@ export function AutomationView({
           automation={editingAutomation}
           workspaces={snapshot.workspaces}
           presets={snapshot.presets}
+          models={snapshot.models}
+          defaultModel={snapshot.defaultModel}
           t={t}
           busy={busyKey === actionKey('update', editingAutomation.id)}
           onCancel={() => setEditingAutomation(undefined)}
@@ -603,7 +702,7 @@ export function AutomationView({
               <span><AutomationIcon /></span>
               <h3>{t('empty.title')}</h3>
               <p>{t('empty.body')}</p>
-              <button className="dsh-automation-button dsh-automation-button--primary" type="button" onClick={() => setShowCreate(true)}><PlusIcon />{t('empty.action')}</button>
+              <button className="dsh-automation-button dsh-automation-button--primary" type="button" disabled={snapshot.workspaces.length === 0} title={snapshot.workspaces.length === 0 ? t('form.workspaceEmpty') : undefined} onClick={() => setShowCreate(true)}><PlusIcon />{t('empty.action')}</button>
             </div>
           ) : (
             <div className="dsh-automation-card-list">

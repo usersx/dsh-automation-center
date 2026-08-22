@@ -55,6 +55,10 @@ type RegistrationOptions = (BaseRegistrationOptions & {
     readonly name: 'conversation.view';
     readonly label: () => string;
     readonly inject: (sessionId: string) => Record<string, unknown>;
+}) | (BaseRegistrationOptions & {
+    readonly name: 'settings.section';
+    readonly label: string | (() => string);
+    readonly inject: () => Record<string, unknown>;
 });
 export interface ClientContext {
     effect(factory: () => void | (() => void), label?: string): void;
@@ -87,7 +91,7 @@ export interface ClientContext {
     };
     slots: {
         entriesOfSlot(name: string): readonly unknown[];
-        inject(name: 'shell.page' | 'sidebar.primary.action' | 'conversation.view', register: () => void | (() => void)): void;
+        inject(name: 'shell.page' | 'sidebar.primary.action' | 'conversation.view' | 'settings.section', register: () => void | (() => void)): void;
         register(options: RegistrationOptions, component: ComponentType<any>): () => void;
     };
 }

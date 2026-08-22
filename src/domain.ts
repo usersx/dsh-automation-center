@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { normalizeSchedule, scheduleToRRule } from './recurrence.ts'
 import type {
   AutomationDefinition, AutomationRun, AutomationSchedule, CreateAutomationInput,
-  DeleteAutomationPlan, UpdateAutomationInput,
+  DeleteAutomationPlan, ModelPolicy, UpdateAutomationInput,
+  StoredAutomationCommandReceipt,
 } from './types.ts'
 
 const nonBlank = z.string().trim().min(1)
@@ -23,18 +24,40 @@ export const automationScheduleSchema = z.discriminatedUnion('kind', [
 ])
 
 const permissionPreset = z.enum(['read-only', 'workspace-write'])
+const modelPolicy = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('inherit') }),
+  z.object({
+    mode: z.literal('pinned'),
+    provider: nonBlank,
+    model: nonBlank,
+    reasoningEffort: nonBlank.optional(),
+  }),
+])
 const creator = z.object({ kind: z.enum(['agent', 'web']), sessionId: nonBlank })
-const targetSnapshot = z.object({
+const targetSnapshotShape = z.object({
   workspaceId: nonBlank,
   cwd: nonBlank,
   agentPreset: nonBlank,
+  modelPolicy,
   provider: z.string().nullable(),
   model: z.string().nullable(),
   permissionPreset,
   runTimeoutMinutes: z.number().int().min(1).max(1_440),
 })
 
-export const automationDefinitionSchema: z.ZodType<AutomationDefinition> = z.object({
+function legacyPolicy(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+  const record = value as Record<string, unknown>
+  if (record.modelPolicy !== undefined) return value
+  const modelPolicy: ModelPolicy = typeof record.provider === 'string' && typeof record.model === 'string'
+    ? { mode: 'pinned', provider: record.provider, model: record.model }
+    : { mode: 'inherit' }
+  return { ...record, modelPolicy }
+}
+
+const targetSnapshot = z.preprocess(legacyPolicy, targetSnapshotShape)
+
+const automationDefinitionShape = z.object({
   version: z.literal(1),
   id: nonBlank,
   revision: z.number().int().positive(),
@@ -47,6 +70,7 @@ export const automationDefinitionSchema: z.ZodType<AutomationDefinition> = z.obj
   workspaceId: nonBlank,
   cwd: nonBlank,
   agentPreset: nonBlank,
+  modelPolicy,
   provider: z.string().nullable(),
   model: z.string().nullable(),
   permissionPreset,
@@ -62,12 +86,23 @@ export const automationDefinitionSchema: z.ZodType<AutomationDefinition> = z.obj
     if (value.rrule !== scheduleToRRule(value.schedule)) {
       ctx.addIssue({ code: 'custom', message: 'rrule must be derived from schedule', path: ['rrule'] })
     }
+    const expectedProvider = value.modelPolicy.mode === 'pinned' ? value.modelPolicy.provider : null
+    const expectedModel = value.modelPolicy.mode === 'pinned' ? value.modelPolicy.model : null
+    if (value.provider !== expectedProvider || value.model !== expectedModel) {
+      ctx.addIssue({ code: 'custom', message: 'provider/model must match modelPolicy', path: ['modelPolicy'] })
+    }
   } catch (error) {
     ctx.addIssue({ code: 'custom', message: String(error), path: ['schedule'] })
   }
 })
 
-export const automationRunSchema: z.ZodType<AutomationRun> = z.object({
+export const automationDefinitionSchema: z.ZodType<AutomationDefinition> = z.preprocess(
+  legacyPolicy,
+  automationDefinitionShape,
+) as z.ZodType<AutomationDefinition>
+
+const runPhase = z.enum(['claim', 'setup', 'executing', 'settling', 'delivery'])
+const automationRunShape = z.object({
   version: z.literal(1),
   id: nonBlank,
   automationId: nonBlank,
@@ -75,7 +110,15 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.object({
   occurrenceKey: nonBlank,
   trigger: z.enum(['schedule', 'manual']),
   scheduledFor: instant,
-  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled']),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled', 'interrupted']),
+  phase: runPhase.nullable(),
+  lease: z.object({
+    ownerId: nonBlank,
+    acquiredAt: instant,
+    heartbeatAt: instant,
+    expiresAt: instant,
+    sideEffectsPossible: z.boolean(),
+  }).nullable(),
   promptSnapshot: nonBlank,
   targetSnapshot,
   sessionId: z.string().nullable(),
@@ -84,7 +127,24 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.object({
   summary: z.string().nullable(),
   error: z.object({ code: nonBlank, message: nonBlank }).nullable(),
   unread: z.boolean(),
+  effectiveModel: z.object({
+    provider: nonBlank,
+    model: nonBlank,
+    reasoningEffort: nonBlank.optional(),
+  }).nullable(),
 })
+
+export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) => {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw
+  const record = raw as Record<string, unknown>
+  const status = record.status
+  return {
+    ...record,
+    phase: record.phase ?? (status === 'queued' ? 'claim' : status === 'running' ? 'executing' : null),
+    lease: record.lease ?? null,
+    effectiveModel: record.effectiveModel ?? null,
+  }
+}, automationRunShape) as z.ZodType<AutomationRun>
 
 // `defineDomain()` and `domainTable()` are identity helpers in DSH. Keeping the
 // declaration as a plain spec avoids making this public repository depend on a
@@ -96,12 +156,24 @@ export const automationDomainSpec = {
   tables: {
     definitions: { valueSchema: automationDefinitionSchema },
     runs: { valueSchema: automationRunSchema },
+    receipts: { valueSchema: z.object({
+      requestId: nonBlank,
+      command: z.enum(['create', 'update', 'pause', 'resume', 'delete', 'run-now', 'cancel-run', 'mark-read']),
+      outcome: z.enum(['committed', 'rejected', 'unknown']),
+      entityId: nonBlank.optional(),
+      revision: z.number().int().positive().optional(),
+      appliedAt: instant,
+      error: z.object({ code: nonBlank, message: nonBlank }).optional(),
+      scopeKey: nonBlank,
+      fingerprint: nonBlank,
+    }) as z.ZodType<StoredAutomationCommandReceipt> },
   },
 } as const
 
 export function createDefinition(input: CreateAutomationInput): AutomationDefinition {
   const schedule = normalizeSchedule(input.schedule)
   const now = parseInstant(input.now, 'now')
+  const resolvedModelPolicy = normalizeModelPolicy(input.modelPolicy, input.provider, input.model)
   return automationDefinitionSchema.parse({
     version: 1,
     id: requireNonBlank(input.id, 'id'),
@@ -115,8 +187,9 @@ export function createDefinition(input: CreateAutomationInput): AutomationDefini
     workspaceId: requireNonBlank(input.workspaceId, 'workspaceId'),
     cwd: requireNonBlank(input.cwd, 'cwd'),
     agentPreset: requireNonBlank(input.agentPreset, 'agentPreset'),
-    provider: input.provider ?? null,
-    model: input.model ?? null,
+    modelPolicy: resolvedModelPolicy,
+    provider: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.provider : null,
+    model: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.model : null,
     permissionPreset: input.permissionPreset ?? 'read-only',
     runTimeoutMinutes: input.runTimeoutMinutes ?? 60,
     createdBy: input.createdBy,
@@ -131,6 +204,9 @@ export function updateDefinition(
 ): AutomationDefinition {
   automationDefinitionSchema.parse(current)
   const schedule = normalizeSchedule(input.schedule ?? current.schedule)
+  const resolvedModelPolicy = input.modelPolicy === undefined
+    ? current.modelPolicy
+    : normalizeModelPolicy(input.modelPolicy)
   return automationDefinitionSchema.parse({
     ...current,
     revision: current.revision + 1,
@@ -143,8 +219,9 @@ export function updateDefinition(
     agentPreset: input.agentPreset === undefined
       ? current.agentPreset
       : requireNonBlank(input.agentPreset, 'agentPreset'),
-    provider: input.provider === undefined ? current.provider : input.provider,
-    model: input.model === undefined ? current.model : input.model,
+    modelPolicy: resolvedModelPolicy,
+    provider: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.provider : null,
+    model: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.model : null,
     permissionPreset: input.permissionPreset ?? current.permissionPreset,
     runTimeoutMinutes: input.runTimeoutMinutes ?? current.runTimeoutMinutes,
     updatedAt: parseInstant(input.now, 'now'),
@@ -225,11 +302,14 @@ function queuedRun(
     trigger,
     scheduledFor,
     status: 'queued',
+    phase: 'claim',
+    lease: null,
     promptSnapshot: definition.prompt,
     targetSnapshot: {
       workspaceId: definition.workspaceId,
       cwd: definition.cwd,
       agentPreset: definition.agentPreset,
+      modelPolicy: definition.modelPolicy,
       provider: definition.provider,
       model: definition.model,
       permissionPreset: definition.permissionPreset,
@@ -241,7 +321,33 @@ function queuedRun(
     summary: null,
     error: null,
     unread: true,
+    effectiveModel: null,
   })
+}
+
+function normalizeModelPolicy(
+  policy: ModelPolicy | undefined,
+  legacyProvider?: string | null,
+  legacyModel?: string | null,
+): ModelPolicy {
+  if (policy?.mode === 'pinned') {
+    const provider = requireNonBlank(policy.provider, 'modelPolicy.provider')
+    const model = requireNonBlank(policy.model, 'modelPolicy.model')
+    const reasoningEffort = policy.reasoningEffort?.trim()
+    return {
+      mode: 'pinned', provider, model,
+      ...(reasoningEffort === undefined || reasoningEffort === '' ? {} : { reasoningEffort }),
+    }
+  }
+  if (policy?.mode === 'inherit') return { mode: 'inherit' }
+  if (legacyProvider != null && legacyModel != null) {
+    return {
+      mode: 'pinned',
+      provider: requireNonBlank(legacyProvider, 'provider'),
+      model: requireNonBlank(legacyModel, 'model'),
+    }
+  }
+  return { mode: 'inherit' }
 }
 
 function requireNonBlank(value: string, field: string): string {

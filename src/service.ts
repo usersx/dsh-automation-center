@@ -26,13 +26,21 @@ import {
 import { latestDueOccurrence, nextOccurrence } from './recurrence.ts'
 import type {
   AutomationDefinition,
+  AutomationCommandReceipt,
+  AutomationCommandName,
+  AutomationModelSelection,
+  ModelPolicy,
   AutomationRun,
+  AutomationRunPhase,
   AutomationSchedule,
   PermissionPreset,
+  StoredAutomationCommandReceipt,
   UpdateAutomationInput,
 } from './types.ts'
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647
+const RUN_LEASE_MS = 30_000
+const RUN_HEARTBEAT_MS = 10_000
 export const AUTOMATION_SESSION_PREFIX = 'dsh-automation-session-'
 
 export interface AutomationConfig {
@@ -50,8 +58,20 @@ export interface CreateRequest {
   readonly schedule: AutomationSchedule
   readonly permissionPreset?: PermissionPreset
   readonly agentPreset?: string
+  readonly modelPolicy?: ModelPolicy
   readonly runTimeoutMinutes?: number
 }
+
+type UpdateRequest = Omit<UpdateAutomationInput, 'now'> & {
+  readonly status?: 'active' | 'paused'
+  readonly expectedRevision?: number
+}
+
+export type AutomationCommand =
+  | { readonly kind: 'create'; readonly requestId: string; readonly input: CreateRequest }
+  | { readonly kind: 'update'; readonly requestId: string; readonly automationId: string; readonly input: UpdateRequest }
+  | { readonly kind: 'pause' | 'resume' | 'delete' | 'run-now'; readonly requestId: string; readonly automationId: string }
+  | { readonly kind: 'cancel-run' | 'mark-read'; readonly requestId: string; readonly runId: string }
 
 export type AutomationScope =
   | { readonly sessionId: string; readonly creatorKind: 'agent' }
@@ -62,6 +82,8 @@ export interface AutomationSnapshot {
   readonly filterWorkspaceId?: string
   readonly workspaces: readonly { readonly id: string; readonly title: string; readonly path: string }[]
   readonly presets: readonly { readonly id: string; readonly name: string; readonly broken: boolean }[]
+  readonly defaultModel: AutomationModelSelection
+  readonly models: readonly AutomationModelOption[]
   readonly definitions: readonly AutomationDefinitionView[]
   readonly runs: readonly AutomationRunView[]
   readonly migration: LegacyMigrationSummary
@@ -70,6 +92,19 @@ export interface AutomationSnapshot {
 export interface AutomationDefinitionView extends AutomationDefinition {
   readonly nextRunAt: string | null
   readonly lastRun: AutomationRun | null
+  readonly health: AutomationHealth
+}
+
+export interface AutomationModelOption extends AutomationModelSelection {
+  readonly providerName: string
+  readonly modelName: string
+  readonly reasoningEfforts: readonly { readonly id: string; readonly name: string }[]
+}
+
+export interface AutomationHealth {
+  readonly status: 'ready' | 'blocked'
+  readonly issues: readonly { readonly code: string; readonly message: string }[]
+  readonly effectiveModel: AutomationModelSelection | null
 }
 
 export interface AutomationRunView extends AutomationRun {
@@ -102,12 +137,15 @@ function compareRuns(left: AutomationRun, right: AutomationRun): number {
 export class AutomationService {
   private definitions!: KvTable<string, AutomationDefinition>
   private runs!: KvTable<string, AutomationRun>
+  private receipts!: KvTable<string, StoredAutomationCommandReceipt>
   private timer: ReturnType<typeof setTimeout> | undefined
   private operationTail: Promise<void> = Promise.resolve()
+  private commandTail: Promise<void> = Promise.resolve()
   private pumpScheduled = false
   private requested = false
   private started = false
   private stopping = false
+  private readonly ownerId = `automation-host-${randomUUID()}`
   private readonly active = new Map<string, { readonly abort: AbortController; readonly promise: Promise<void> }>()
   private migration: LegacyMigrationSummary = {
     detectedDefinitions: 0,
@@ -128,6 +166,7 @@ export class AutomationService {
       const service = new AutomationService(ctx, domain, config)
       service.definitions = domain.table('definitions') as KvTable<string, AutomationDefinition>
       service.runs = domain.table('runs') as KvTable<string, AutomationRun>
+      service.receipts = domain.table('receipts') as KvTable<string, StoredAutomationCommandReceipt>
       service.migration = await service.importLegacyData()
       await service.recoverInterruptedRuns()
       await service.archiveTerminalRunSessions()
@@ -170,7 +209,8 @@ export class AutomationService {
     // A pump that was already admitted may be between durable writes. Drain
     // it before taking the active-run snapshot so no late run escapes abort.
     await this.operationTail.catch(() => {})
-    for (const { abort } of this.active.values()) abort.abort()
+    await this.commandTail.catch(() => {})
+    for (const { abort } of this.active.values()) abort.abort({ code: 'host_stopping' })
     await Promise.allSettled([...this.active.values()].map(value => value.promise))
     await this.domain.close()
   }
@@ -207,15 +247,25 @@ export class AutomationService {
         name: preset.name ?? preset.id,
         broken: preset.broken !== undefined,
       }))
+      const defaultModel = this.defaultModelSelection()
+      const models = await this.modelCatalog(signal)
+      const health = new Map(await Promise.all(definitions.map(async definition => (
+        [definition.id, await this.preflightTarget(definition, signal)] as const
+      ))))
       return {
         generatedAt,
         ...(selectedWorkspaceId === undefined ? {} : { filterWorkspaceId: selectedWorkspaceId }),
         workspaces,
         presets,
+        defaultModel,
+        models,
         definitions: definitions.map((definition) => ({
           ...definition,
           nextRunAt: definition.status === 'active' ? nextOccurrence(definition.schedule, generatedAt) : null,
           lastRun: workspaceRuns.find(run => run.automationId === definition.id) ?? null,
+          health: health.get(definition.id) ?? {
+            status: 'blocked', issues: [{ code: 'preflight_unavailable', message: 'Preflight did not complete.' }], effectiveModel: null,
+          },
         })),
         runs,
         migration: this.migration,
@@ -231,14 +281,14 @@ export class AutomationService {
       if (request.schedule.kind === 'once' && nextOccurrence(request.schedule, now) === null) {
         throw new Error('A one-time automation must be scheduled in the future.')
       }
-      const loggedSelection = resolved.agent?.session.requestHeader()?.config
-      const selection = loggedSelection ?? this.ctx.agentDefaultModel.currentSelection()
       const agentPreset = request.agentPreset
         ?? (resolved.agent === undefined ? undefined : this.ctx.agentPresets.composedPreset(resolved.agent.ctx))
         ?? resolved.agent?.session.header.agentPreset
         ?? this.ctx.agentPresets.defaultId
       const resolvedPreset = await this.ctx.agentPresets.resolve(agentPreset)
       if (resolvedPreset.broken !== undefined) throw new Error(`Agent preset '${agentPreset}' is unavailable.`)
+      const modelPolicy = request.modelPolicy ?? { mode: 'inherit' as const }
+      await this.validateModelPolicy(modelPolicy, signal)
       const requestId = request.clientRequestId?.trim() || randomUUID()
       const id = `automation_${createHash('sha256')
         .update(`${resolved.workspace.id}:${requestId}`)
@@ -253,8 +303,7 @@ export class AutomationService {
         workspaceId: resolved.workspace.id,
         cwd: resolved.workspace.path,
         agentPreset,
-        provider: selection.provider,
-        model: selection.model,
+        modelPolicy,
         permissionPreset: request.permissionPreset ?? 'read-only',
         runTimeoutMinutes: request.runTimeoutMinutes ?? Math.max(1, Math.round(this.config.runTimeoutMs / 60_000)),
         createdBy: {
@@ -273,10 +322,7 @@ export class AutomationService {
   async update(
     scope: AutomationScope,
     id: string,
-    input: Omit<UpdateAutomationInput, 'now'> & {
-      readonly status?: 'active' | 'paused'
-      readonly expectedRevision?: number
-    },
+    input: UpdateRequest,
     signal?: AbortSignal,
   ): Promise<AutomationDefinition> {
     const next = await this.serialize(async () => {
@@ -290,6 +336,7 @@ export class AutomationService {
       if (fields.schedule?.kind === 'once' && nextOccurrence(fields.schedule, now) === null) {
         throw new Error('A one-time automation must be scheduled in the future.')
       }
+      if (fields.modelPolicy !== undefined) await this.validateModelPolicy(fields.modelPolicy, signal)
       const statusChanged = status !== undefined && status !== current.status
       const value = Object.keys(fields).length === 0 && !statusChanged
         ? current
@@ -316,21 +363,158 @@ export class AutomationService {
     return { id, deleted }
   }
 
-  async runNow(scope: AutomationScope, id: string, signal?: AbortSignal): Promise<AutomationRun> {
+  async runNow(scope: AutomationScope, id: string, signal?: AbortSignal, requestId?: string): Promise<AutomationRun> {
     const run = await this.serialize(async () => {
       const definition = await this.ownedDefinition(scope, id)
       throwIfCancelled(signal)
+      const value = createManualRun(definition, toIso(), requestId)
+      const existing = this.runs.get(value.id)
+      if (existing !== undefined) return existing
       const alreadyActive = [...this.runs.entries()].some(([, candidate]) => (
         candidate.automationId === id
         && (candidate.status === 'queued' || candidate.status === 'running')
       ))
       if (alreadyActive) throw new Error('The automation already has a queued or running run.')
-      const value = createManualRun(definition, toIso())
       await this.runs.put(value.id, value)
       return value
     }, signal)
     this.requestPump()
     return run
+  }
+
+  async dispatch(
+    scope: AutomationScope,
+    command: AutomationCommand,
+    signal?: AbortSignal,
+  ): Promise<AutomationCommandReceipt> {
+    if (this.stopping) throw new Error('The automation service is stopping.')
+    const result = this.commandTail.then(async (): Promise<AutomationCommandReceipt> => {
+      throwIfCancelled(signal)
+      const requestId = command.requestId.trim()
+      if (requestId === '') throw new Error('requestId must not be blank')
+      const scopeKey = scope.creatorKind === 'agent'
+        ? `agent:${scope.sessionId}`
+        : `web:${scope.workspaceId ?? '*'}`
+      const fingerprint = createHash('sha256').update(JSON.stringify(command)).digest('hex')
+      const receiptKey = createHash('sha256').update(`${scopeKey}:${requestId}`).digest('hex')
+      const existing = this.receipts.get(receiptKey)
+      if (existing !== undefined) {
+        if (existing.fingerprint !== fingerprint) {
+          return {
+            requestId,
+            command: command.kind,
+            outcome: 'rejected',
+            appliedAt: existing.appliedAt,
+            replayed: true,
+            error: { code: 'request_id_reused', message: 'The request id was already used for a different command.' },
+          }
+        }
+        const { fingerprint: _fingerprint, scopeKey: _scopeKey, ...stored } = existing
+        return { ...stored, replayed: true }
+      }
+
+      // Reserve the id before applying the mutation. If the Host stops after
+      // the write but before the final receipt, a replay returns `unknown`
+      // and reconciles from storage instead of applying the command twice.
+      const provisional: StoredAutomationCommandReceipt = {
+        requestId,
+        command: command.kind,
+        outcome: 'unknown',
+        appliedAt: toIso(),
+        error: {
+          code: 'result_unknown',
+          message: 'The command was admitted but its final outcome has not been recorded.',
+        },
+        scopeKey,
+        fingerprint,
+      }
+      await this.receipts.put(receiptKey, provisional)
+
+      let entityId: string | undefined
+      let revision: number | undefined
+      let outcome: AutomationCommandReceipt['outcome'] = 'committed'
+      let error: AutomationCommandReceipt['error']
+      try {
+        const applied = await this.applyCommand(scope, command, signal)
+        entityId = applied.entityId
+        revision = applied.revision
+      } catch (cause: unknown) {
+        outcome = signal?.aborted === true ? 'unknown' : 'rejected'
+        error = {
+          code: signal?.aborted === true ? 'result_unknown' : this.commandErrorCode(cause),
+          message: asMessage(cause),
+        }
+      }
+      const stored: StoredAutomationCommandReceipt = {
+        requestId,
+        command: command.kind,
+        outcome,
+        ...(entityId === undefined ? {} : { entityId }),
+        ...(revision === undefined ? {} : { revision }),
+        appliedAt: toIso(),
+        ...(error === undefined ? {} : { error }),
+        scopeKey,
+        fingerprint,
+      }
+      await this.receipts.put(receiptKey, stored)
+      const { fingerprint: _fingerprint, scopeKey: _scopeKey, ...receipt } = stored
+      return { ...receipt, replayed: false }
+    })
+    this.commandTail = result.then(() => {}, () => {})
+    return result
+  }
+
+  private async applyCommand(
+    scope: AutomationScope,
+    command: AutomationCommand,
+    signal?: AbortSignal,
+  ): Promise<{ readonly entityId: string; readonly revision?: number }> {
+    switch (command.kind) {
+      case 'create': {
+        const value = await this.create(scope, { ...command.input, clientRequestId: command.requestId }, signal)
+        return { entityId: value.id, revision: value.revision }
+      }
+      case 'update': {
+        const value = await this.update(scope, command.automationId, command.input, signal)
+        return { entityId: value.id, revision: value.revision }
+      }
+      case 'pause':
+      case 'resume': {
+        const value = await this.update(scope, command.automationId, {
+          status: command.kind === 'pause' ? 'paused' : 'active',
+        }, signal)
+        return { entityId: value.id, revision: value.revision }
+      }
+      case 'delete': {
+        const value = await this.delete(scope, command.automationId, signal)
+        return { entityId: value.id }
+      }
+      case 'run-now': {
+        const value = await this.runNow(scope, command.automationId, signal, command.requestId)
+        return { entityId: value.id }
+      }
+      case 'cancel-run': {
+        const value = await this.cancelRun(scope, command.runId, signal)
+        return { entityId: value.id }
+      }
+      case 'mark-read': {
+        const value = await this.markRead(scope, command.runId, signal)
+        return { entityId: value.id }
+      }
+    }
+  }
+
+  private commandErrorCode(error: unknown): string {
+    const message = asMessage(error)
+    if (/changed since it was opened/.test(message)) return 'revision_conflict'
+    if (/unknown automation run/.test(message)) return 'run_not_found'
+    if (/unknown automation/.test(message)) return 'automation_not_found'
+    if (/workspace/i.test(message)) return 'workspace_unavailable'
+    if (/preset/i.test(message)) return 'preset_unavailable'
+    if (/(provider|model|reasoning)/i.test(message)) return 'model_unavailable'
+    if (/permission/i.test(message)) return 'permission_denied'
+    if (/queued or running/.test(message)) return 'already_running'
+    return 'invalid_command'
   }
 
   async markRead(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun> {
@@ -368,7 +552,7 @@ export class AutomationService {
         throw new Error('Only a queued or running automation can be cancelled.')
       }
       if (run.status === 'running') {
-        this.active.get(runId)?.abort.abort()
+        this.active.get(runId)?.abort.abort({ code: 'cancelled' })
         return run
       }
       const cancelled: AutomationRun = {
@@ -411,6 +595,144 @@ export class AutomationService {
     return definition
   }
 
+  private async validateModelPolicy(policy: ModelPolicy, signal?: AbortSignal): Promise<void> {
+    if (policy.mode === 'inherit') return
+    throwIfCancelled(signal)
+    const llm = this.llmRuntime()
+    if (llm === undefined) throw new Error('The selected model is unavailable because the LLM catalog is not mounted.')
+    let info: Awaited<ReturnType<typeof llm.resolveModelInfo>>
+    try {
+      info = await llm.resolveModelInfo(policy.provider, policy.model, signal)
+    } catch (error: unknown) {
+      if (signal?.aborted === true) throw error
+      throw new Error(`The selected model '${policy.provider}/${policy.model}' is unavailable: ${asMessage(error)}`)
+    }
+    if (policy.reasoningEffort !== undefined
+      && !info.reasoning?.efforts.some(effort => String(effort.id) === policy.reasoningEffort)) {
+      throw new Error(
+        `Reasoning effort '${policy.reasoningEffort}' is unavailable for '${policy.provider}/${policy.model}'.`,
+      )
+    }
+  }
+
+  private defaultModelSelection(): AutomationModelSelection {
+    const selection = this.ctx.agentDefaultModel.currentSelection()
+    return {
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: String(selection.reasoningEffort) }),
+    }
+  }
+
+  private llmRuntime(): {
+    listProviders(): readonly { readonly id: string; readonly name: string }[]
+    listModels(provider: string): Promise<readonly { readonly provider: string; readonly id: string; readonly name: string }[]>
+    resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<{
+      readonly reasoning?: {
+        readonly efforts: readonly { readonly id: string; readonly name?: string }[]
+        readonly defaultEffort?: string
+      }
+    }>
+  } | undefined {
+    return (this.ctx as Context & { readonly llm?: ReturnType<AutomationService['llmRuntime']> }).llm
+  }
+
+  private async modelCatalog(signal?: AbortSignal): Promise<readonly AutomationModelOption[]> {
+    const llm = this.llmRuntime()
+    const fallback = this.defaultModelSelection()
+    if (llm === undefined) {
+      return [{ ...fallback, providerName: fallback.provider, modelName: fallback.model, reasoningEfforts: [] }]
+    }
+    const values: AutomationModelOption[] = []
+    for (const provider of llm.listProviders()) {
+      throwIfCancelled(signal)
+      let models: readonly { readonly provider: string; readonly id: string; readonly name: string }[] = []
+      try { models = await llm.listModels(provider.id) } catch (error: unknown) {
+        if (signal?.aborted === true) throw error
+        continue
+      }
+      for (const model of models) {
+        throwIfCancelled(signal)
+        let reasoningEfforts: readonly { readonly id: string; readonly name: string }[] = []
+        try {
+          const resolved = await llm.resolveModelInfo(provider.id, model.id, signal)
+          reasoningEfforts = resolved.reasoning?.efforts.map(effort => ({
+            id: String(effort.id), name: effort.name ?? String(effort.id),
+          })) ?? []
+        } catch (error: unknown) {
+          if (signal?.aborted === true) throw error
+          // The catalog is advisory. Preflight reports exact-route failures.
+        }
+        values.push({
+          provider: provider.id,
+          providerName: provider.name,
+          model: model.id,
+          modelName: model.name,
+          reasoningEfforts,
+        })
+      }
+    }
+    if (!values.some(value => value.provider === fallback.provider && value.model === fallback.model)) {
+      values.unshift({
+        ...fallback, providerName: fallback.provider, modelName: fallback.model, reasoningEfforts: [],
+      })
+    }
+    return values
+  }
+
+  private async preflightTarget(
+    target: Pick<AutomationDefinition, 'workspaceId' | 'cwd' | 'agentPreset' | 'modelPolicy'>,
+    signal?: AbortSignal,
+  ): Promise<AutomationHealth> {
+    const issues: Array<{ readonly code: string; readonly message: string }> = []
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(target.workspaceId))
+    if (workspace === undefined) {
+      issues.push({ code: 'workspace_not_found', message: 'The target workspace is not registered.' })
+    } else {
+      try {
+        if (workspace.path !== target.cwd || await workspace.status() !== 'ok') {
+          issues.push({ code: 'workspace_unavailable', message: 'The target workspace directory is unavailable or changed.' })
+        }
+      } catch (error: unknown) {
+        if (signal?.aborted === true) throw error
+        issues.push({ code: 'workspace_unavailable', message: `The target workspace could not be checked: ${asMessage(error)}` })
+      }
+    }
+    throwIfCancelled(signal)
+    try {
+      const preset = await this.ctx.agentPresets.resolve(target.agentPreset)
+      if (preset.broken !== undefined) {
+        issues.push({ code: 'preset_unavailable', message: `Agent preset '${target.agentPreset}' is unavailable.` })
+      }
+    } catch (error: unknown) {
+      if (signal?.aborted === true) throw error
+      issues.push({ code: 'preset_unavailable', message: asMessage(error) })
+    }
+    const effectiveModel = target.modelPolicy.mode === 'pinned'
+      ? {
+          provider: target.modelPolicy.provider,
+          model: target.modelPolicy.model,
+          ...(target.modelPolicy.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: target.modelPolicy.reasoningEffort }),
+        }
+      : this.defaultModelSelection()
+    try {
+      await this.validateModelPolicy({
+        mode: 'pinned',
+        provider: effectiveModel.provider,
+        model: effectiveModel.model,
+        ...(effectiveModel.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: effectiveModel.reasoningEffort }),
+      }, signal)
+    } catch (error: unknown) {
+      if (signal?.aborted === true) throw error
+      issues.push({ code: 'model_unavailable', message: asMessage(error) })
+    }
+    return { status: issues.length === 0 ? 'ready' : 'blocked', issues, effectiveModel }
+  }
+
   /** Import the old plugin's v1 domain without ever mutating or deleting it. */
   private async importLegacyData(): Promise<LegacyMigrationSummary> {
     const legacy = await this.ctx.storageDomain.open(legacyAutomationDomainSpec)
@@ -421,7 +743,10 @@ export class AutomationService {
       let importedRuns = 0
       const defaultTimeout = Math.max(1, Math.round(this.config.runTimeoutMs / 60_000))
       for (const [id, old] of oldDefinitions.entries()) {
-        const converted = { ...old, runTimeoutMinutes: defaultTimeout }
+        const modelPolicy = old.provider !== null && old.model !== null
+          ? { mode: 'pinned' as const, provider: old.provider, model: old.model }
+          : { mode: 'inherit' as const }
+        const converted: AutomationDefinition = { ...old, modelPolicy, runTimeoutMinutes: defaultTimeout }
         const existing = this.definitions.get(id)
         if (existing !== undefined) {
           if (JSON.stringify(existing) !== JSON.stringify(converted)) {
@@ -433,9 +758,15 @@ export class AutomationService {
         importedDefinitions += 1
       }
       for (const [id, old] of oldRuns.entries()) {
-        const converted = {
+        const modelPolicy = old.targetSnapshot.provider !== null && old.targetSnapshot.model !== null
+          ? { mode: 'pinned' as const, provider: old.targetSnapshot.provider, model: old.targetSnapshot.model }
+          : { mode: 'inherit' as const }
+        const converted: AutomationRun = {
           ...old,
-          targetSnapshot: { ...old.targetSnapshot, runTimeoutMinutes: defaultTimeout },
+          targetSnapshot: { ...old.targetSnapshot, modelPolicy, runTimeoutMinutes: defaultTimeout },
+          phase: old.status === 'queued' ? 'claim' : old.status === 'running' ? 'executing' : null,
+          lease: null,
+          effectiveModel: null,
         }
         const existing = this.runs.get(id)
         if (existing !== undefined) {
@@ -546,17 +877,39 @@ export class AutomationService {
 
   private startRun(run: AutomationRun): void {
     const abort = new AbortController()
+    const deadline = setTimeout(() => {
+      abort.abort({ code: 'run_timeout' })
+    }, Math.max(1, run.targetSnapshot.runTimeoutMinutes * 60_000))
+    deadline.unref?.()
+    const heartbeat = setInterval(() => {
+      void this.refreshRunLease(run.id).catch((error: unknown) => {
+        if (!this.stopping) this.ctx.logger.warn(`dsh-automation: heartbeat failed for run '${run.id}': ${asMessage(error)}`)
+      })
+    }, RUN_HEARTBEAT_MS)
+    heartbeat.unref?.()
     const promise = this.executeRun(run, abort.signal)
       .catch(async (error: unknown) => {
         this.ctx.logger.warn(`dsh-automation: run '${run.id}' failed outside its execution boundary: ${asMessage(error)}`)
         try {
           const current = this.runs.get(run.id)
           if (current !== undefined && (current.status === 'queued' || current.status === 'running')) {
+            const abortReason = abort.signal.reason
+            const abortCode = typeof abortReason === 'object' && abortReason !== null && 'code' in abortReason
+              ? String((abortReason as { readonly code: unknown }).code)
+              : undefined
+            const timedOut = abortCode === 'run_timeout'
+            const cancelled = abortCode === 'cancelled' || abortCode === 'host_stopping'
             const failed: AutomationRun = {
               ...current,
-              status: 'failed',
+              status: cancelled ? 'cancelled' : 'failed',
+              phase: null,
+              lease: null,
               finishedAt: toIso(),
-              error: { code: 'persistence_error', message: 'The run could not persist its execution state.' },
+              error: timedOut
+                ? { code: 'run_timeout', message: 'The automation exceeded its whole-job time limit.' }
+                : cancelled
+                  ? { code: 'cancelled', message: 'The automation was cancelled before it completed.' }
+                  : { code: 'persistence_error', message: 'The run could not persist its execution state.' },
               unread: true,
             }
             await this.runs.put(run.id, failed)
@@ -568,6 +921,8 @@ export class AutomationService {
         }
       })
       .finally(() => {
+        clearTimeout(deadline)
+        clearInterval(heartbeat)
         this.active.delete(run.id)
         this.requestPump()
       })
@@ -586,31 +941,117 @@ export class AutomationService {
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
       return
     }
+    const health = await this.preflightTarget({
+      workspaceId: run.targetSnapshot.workspaceId,
+      cwd: run.targetSnapshot.cwd,
+      agentPreset: run.targetSnapshot.agentPreset,
+      modelPolicy: run.targetSnapshot.modelPolicy,
+    }, signal)
+    if (health.status === 'blocked') {
+      const issue = health.issues[0] ?? {
+        code: 'preflight_failed', message: 'The automation target failed preflight.',
+      }
+      await this.runs.put(run.id, {
+        ...run,
+        status: 'failed',
+        phase: null,
+        lease: null,
+        finishedAt: toIso(),
+        effectiveModel: health.effectiveModel,
+        error: issue,
+        unread: true,
+      })
+      await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
+      return
+    }
     const startedAt = toIso()
     // The durable identity lives in the SessionId itself. This remains true
     // even if Agent creation fails before the first automation-sourced message
     // is appended and after bounded run history has pruned the owning row.
     const sessionId = `${AUTOMATION_SESSION_PREFIX}${randomUUID()}`
-    const running: AutomationRun = { ...run, status: 'running', startedAt, sessionId }
+    const running: AutomationRun = {
+      ...run,
+      status: 'running',
+      phase: 'setup',
+      lease: this.newLease(startedAt, false),
+      startedAt,
+      sessionId,
+    }
     await this.runs.put(run.id, running)
     const completion = await executeAutomationRun(this.ctx, definition, run, {
       runTimeoutMs: run.targetSnapshot.runTimeoutMinutes * 60_000,
       sessionId,
       signal,
+      onPhase: async (phase, sideEffectsPossible) => {
+        await this.persistRunPhase(run.id, phase, sideEffectsPossible)
+      },
     })
+    await this.persistRunPhase(run.id, 'delivery', true)
+    const abortReason = signal.reason
+    const timedOut = signal.aborted === true
+      && typeof abortReason === 'object' && abortReason !== null && 'code' in abortReason
+      && String((abortReason as { readonly code: unknown }).code) === 'run_timeout'
+    const delivering = this.runs.get(run.id) ?? running
     const finishedAt = toIso()
     const completed: AutomationRun = {
-      ...running,
-      status: completion.status,
+      ...delivering,
+      status: timedOut ? 'failed' : completion.status,
+      phase: null,
+      lease: null,
       sessionId: completion.sessionId ?? null,
       finishedAt,
       summary: completion.summary ?? null,
-      error: completion.error ?? null,
+      error: timedOut
+        ? { code: 'run_timeout', message: 'The automation exceeded its whole-job time limit.' }
+        : completion.error ?? null,
       unread: true,
+      effectiveModel: completion.effectiveModel ?? null,
     }
     await this.runs.put(run.id, completed)
     await this.archiveRunSession(completed)
     await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
+  }
+
+  private newLease(now: string, sideEffectsPossible: boolean) {
+    return {
+      ownerId: this.ownerId,
+      acquiredAt: now,
+      heartbeatAt: now,
+      expiresAt: toIso(Date.parse(now) + RUN_LEASE_MS),
+      sideEffectsPossible,
+    }
+  }
+
+  private async persistRunPhase(
+    runId: string,
+    phase: AutomationRunPhase,
+    sideEffectsPossible: boolean,
+  ): Promise<void> {
+    const current = this.runs.get(runId)
+    if (current === undefined || current.status !== 'running') return
+    const now = toIso()
+    await this.runs.put(runId, {
+      ...current,
+      phase,
+      lease: current.lease === null
+        ? this.newLease(now, sideEffectsPossible)
+        : {
+            ...current.lease,
+            heartbeatAt: now,
+            expiresAt: toIso(Date.parse(now) + RUN_LEASE_MS),
+            sideEffectsPossible: current.lease.sideEffectsPossible || sideEffectsPossible,
+          },
+    })
+  }
+
+  private async refreshRunLease(runId: string): Promise<void> {
+    const current = this.runs.get(runId)
+    if (current?.status !== 'running' || current.lease?.ownerId !== this.ownerId) return
+    const now = toIso()
+    await this.runs.put(runId, {
+      ...current,
+      lease: { ...current.lease, heartbeatAt: now, expiresAt: toIso(Date.parse(now) + RUN_LEASE_MS) },
+    })
   }
 
   private armNextTimer(now: string): void {
@@ -661,14 +1102,27 @@ export class AutomationService {
   private async recoverInterruptedRuns(): Promise<void> {
     const finishedAt = toIso()
     for (const [id, run] of this.runs.entries()) {
-      if (run.status !== 'queued' && run.status !== 'running') continue
+      if (run.status === 'queued') {
+        await this.runs.put(id, { ...run, phase: 'claim', lease: null })
+        continue
+      }
+      if (run.status !== 'running') continue
+      const safeToRetry = run.sessionId === null && run.lease?.sideEffectsPossible !== true
+      if (safeToRetry) {
+        await this.runs.put(id, {
+          ...run, status: 'queued', phase: 'claim', lease: null, startedAt: null, error: null,
+        })
+        continue
+      }
       await this.runs.put(id, {
         ...run,
-        status: 'failed',
+        status: 'interrupted',
+        phase: null,
+        lease: null,
         finishedAt,
         error: {
           code: 'host_interrupted',
-          message: 'The DSH Host stopped before this automation run reached a terminal state.',
+          message: 'The DSH Host stopped after this run may have produced side effects; it was not retried.',
         },
         unread: true,
       })

@@ -1,5 +1,6 @@
 export type AutomationStatus = 'active' | 'paused'
-export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled'
+export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
+export type AutomationRunPhase = 'claim' | 'setup' | 'executing' | 'settling' | 'delivery'
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU'
 
 export interface OnceSchedule {
@@ -30,6 +31,25 @@ export interface WeeklySchedule {
 
 export type AutomationSchedule = OnceSchedule | IntervalSchedule | DailySchedule | WeeklySchedule
 export type PermissionPreset = 'read-only' | 'workspace-write'
+
+export interface InheritModelPolicy {
+  readonly mode: 'inherit'
+}
+
+export interface PinnedModelPolicy {
+  readonly mode: 'pinned'
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string | undefined
+}
+
+export type ModelPolicy = InheritModelPolicy | PinnedModelPolicy
+
+export interface AutomationModelSelection {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string | undefined
+}
 
 export interface AutomationCreator {
   readonly kind: 'agent' | 'web'
@@ -63,6 +83,8 @@ export interface AutomationDefinition {
   readonly workspaceId: string
   readonly cwd: string
   readonly agentPreset: string
+  readonly modelPolicy: ModelPolicy
+  /** Compatibility projection for alpha.5 records and clients. */
   readonly provider: string | null
   readonly model: string | null
   readonly permissionPreset: PermissionPreset
@@ -76,6 +98,7 @@ export interface AutomationTargetSnapshot {
   readonly workspaceId: string
   readonly cwd: string
   readonly agentPreset: string
+  readonly modelPolicy: ModelPolicy
   readonly provider: string | null
   readonly model: string | null
   readonly permissionPreset: PermissionPreset
@@ -87,6 +110,14 @@ export interface AutomationRunError {
   readonly message: string
 }
 
+export interface AutomationRunLease {
+  readonly ownerId: string
+  readonly acquiredAt: string
+  readonly heartbeatAt: string
+  readonly expiresAt: string
+  readonly sideEffectsPossible: boolean
+}
+
 export interface AutomationRun {
   readonly version: 1
   readonly id: string
@@ -96,6 +127,8 @@ export interface AutomationRun {
   readonly trigger: 'schedule' | 'manual'
   readonly scheduledFor: string
   readonly status: AutomationRunStatus
+  readonly phase: AutomationRunPhase | null
+  readonly lease: AutomationRunLease | null
   readonly promptSnapshot: string
   readonly targetSnapshot: AutomationTargetSnapshot
   readonly sessionId: string | null
@@ -104,6 +137,7 @@ export interface AutomationRun {
   readonly summary: string | null
   readonly error: AutomationRunError | null
   readonly unread: boolean
+  readonly effectiveModel: AutomationModelSelection | null
 }
 
 export interface CreateAutomationInput {
@@ -114,6 +148,7 @@ export interface CreateAutomationInput {
   readonly workspaceId: string
   readonly cwd: string
   readonly agentPreset: string
+  readonly modelPolicy?: ModelPolicy
   readonly provider?: string | null
   readonly model?: string | null
   readonly permissionPreset?: PermissionPreset
@@ -128,6 +163,7 @@ export interface UpdateAutomationInput {
   readonly status?: AutomationStatus
   readonly schedule?: AutomationSchedule
   readonly agentPreset?: string
+  readonly modelPolicy?: ModelPolicy
   readonly provider?: string | null
   readonly model?: string | null
   readonly permissionPreset?: PermissionPreset
@@ -138,4 +174,30 @@ export interface UpdateAutomationInput {
 export interface DeleteAutomationPlan {
   readonly id: string
   readonly preserveRunHistory: true
+}
+
+export type AutomationCommandName =
+  | 'create'
+  | 'update'
+  | 'pause'
+  | 'resume'
+  | 'delete'
+  | 'run-now'
+  | 'cancel-run'
+  | 'mark-read'
+
+export interface AutomationCommandReceipt {
+  readonly requestId: string
+  readonly command: AutomationCommandName
+  readonly outcome: 'committed' | 'rejected' | 'unknown'
+  readonly entityId?: string | undefined
+  readonly revision?: number | undefined
+  readonly appliedAt: string
+  readonly replayed: boolean
+  readonly error?: AutomationRunError | undefined
+}
+
+export interface StoredAutomationCommandReceipt extends Omit<AutomationCommandReceipt, 'replayed'> {
+  readonly scopeKey: string
+  readonly fingerprint: string
 }

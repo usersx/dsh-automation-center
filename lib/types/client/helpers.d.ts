@@ -14,9 +14,13 @@ export interface AutomationFormState {
     readonly permission: CreateAutomationInput['permission'];
     readonly workspaceId: string;
     readonly agentPreset: string;
+    readonly modelMode: 'inherit' | 'pinned';
+    readonly modelProvider: string;
+    readonly model: string;
+    readonly reasoningEffort: string;
     readonly runTimeoutMinutes: string;
 }
-export type FormErrorKey = 'form.error.name' | 'form.error.prompt' | 'form.error.once' | 'form.error.interval' | 'form.error.weekdays' | 'form.error.workspace' | 'form.error.preset' | 'form.error.timeout';
+export type FormErrorKey = 'form.error.name' | 'form.error.prompt' | 'form.error.once' | 'form.error.interval' | 'form.error.weekdays' | 'form.error.workspace' | 'form.error.preset' | 'form.error.model' | 'form.error.timeout';
 export declare class AutomationFormError extends Error {
     readonly key: FormErrorKey;
     constructor(key: FormErrorKey);

@@ -2,6 +2,24 @@
 export type AutomationStatus = 'active' | 'paused';
 export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled' | 'interrupted';
 export type AutomationPermission = 'read-only' | 'workspace-write';
+export type AutomationModelPolicy = {
+    readonly mode: 'inherit';
+} | {
+    readonly mode: 'pinned';
+    readonly provider: string;
+    readonly model: string;
+    readonly reasoningEffort?: string;
+};
+export interface AutomationModelOption {
+    readonly provider: string;
+    readonly providerName: string;
+    readonly model: string;
+    readonly modelName: string;
+    readonly reasoningEfforts: readonly {
+        readonly id: string;
+        readonly name: string;
+    }[];
+}
 export type AutomationSchedule = {
     readonly kind: 'once';
     readonly at: string;
@@ -34,6 +52,19 @@ export interface AutomationViewModel {
     readonly workspaceId: string;
     readonly workspaceName: string;
     readonly agentPreset: string;
+    readonly modelPolicy: AutomationModelPolicy;
+    readonly health: {
+        readonly status: 'ready' | 'blocked';
+        readonly issues: readonly {
+            readonly code: string;
+            readonly message: string;
+        }[];
+        readonly effectiveModel?: {
+            readonly provider: string;
+            readonly model: string;
+            readonly reasoningEffort?: string;
+        };
+    };
     readonly runTimeoutMinutes: number;
     readonly nextRunAt?: string;
     readonly lastRunAt?: string;
@@ -46,6 +77,15 @@ export interface AutomationRunViewModel {
     readonly automationId: string;
     readonly automationName: string;
     readonly status: AutomationRunStatus;
+    readonly phase?: 'claim' | 'setup' | 'executing' | 'settling' | 'delivery';
+    readonly heartbeatAt?: string;
+    readonly leaseExpiresAt?: string;
+    readonly sideEffectsPossible?: boolean;
+    readonly effectiveModel?: {
+        readonly provider: string;
+        readonly model: string;
+        readonly reasoningEffort?: string;
+    };
     readonly trigger: 'schedule' | 'manual' | 'catch-up';
     readonly scheduledFor: string;
     readonly startedAt?: string;
@@ -69,6 +109,12 @@ export interface AutomationSnapshot {
         readonly name: string;
         readonly broken: boolean;
     }[];
+    readonly defaultModel: {
+        readonly provider: string;
+        readonly model: string;
+        readonly reasoningEffort?: string;
+    };
+    readonly models: readonly AutomationModelOption[];
     readonly automations: readonly AutomationViewModel[];
     readonly runs: readonly AutomationRunViewModel[];
     readonly migration: {
@@ -87,6 +133,7 @@ export interface CreateAutomationInput {
     readonly permission: AutomationPermission;
     readonly workspaceId: string;
     readonly agentPreset: string;
+    readonly modelPolicy: AutomationModelPolicy;
     readonly runTimeoutMinutes: number;
 }
 export interface UpdateAutomationInput {
@@ -97,6 +144,7 @@ export interface UpdateAutomationInput {
     readonly permission?: AutomationPermission;
     readonly agentPreset?: string;
     readonly runTimeoutMinutes?: number;
+    readonly modelPolicy?: AutomationModelPolicy;
 }
 export interface SnapshotRequest {
     readonly workspaceId?: string;
@@ -108,26 +156,44 @@ export interface CreateRequest {
 }
 export interface UpdateRequest {
     readonly workspaceId?: string;
+    readonly clientRequestId: string;
     readonly automationId: string;
     readonly expectedRevision: number;
     readonly input: UpdateAutomationInput;
 }
 export interface MutateRequest {
     readonly workspaceId?: string;
+    readonly clientRequestId: string;
     readonly automationId: string;
     readonly mutation: 'pause' | 'resume' | 'delete';
 }
 export interface RunNowRequest {
     readonly workspaceId?: string;
+    readonly clientRequestId: string;
     readonly automationId: string;
 }
 export interface MarkReadRequest {
     readonly workspaceId?: string;
+    readonly clientRequestId: string;
     readonly runId: string;
 }
 export interface CancelRunRequest {
     readonly workspaceId?: string;
+    readonly clientRequestId: string;
     readonly runId: string;
+}
+export interface AutomationCommandReceipt {
+    readonly requestId: string;
+    readonly command: string;
+    readonly outcome: 'committed' | 'rejected' | 'unknown';
+    readonly entityId?: string;
+    readonly revision?: number;
+    readonly appliedAt: string;
+    readonly replayed: boolean;
+    readonly error?: {
+        readonly code: string;
+        readonly message: string;
+    };
 }
 export interface RpcErrorValue {
     readonly code: string;
