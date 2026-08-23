@@ -14,7 +14,7 @@ DSH Automation Center 为 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 
 当前版本会按 DSH 能力选择原生界面，不注入 DOM，也不替换 Sidebar：
 
-- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 在“设置 → 自动化”提供全局管理页，无 Session 也能进入；Session 内的“自动化”标签作为快捷入口。普通用户可直接安装，不需要 Shell Page Patch。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 至最新 `0.1.1-rc.2` 在“设置 → 自动化”提供全局管理页，无 Session 也能进入；Session 内的“自动化”标签作为快捷入口。普通用户可直接安装，不需要 Shell Page Patch。
 - **全局中心模式**：当 DSH 提供 `sidebar.primary.action` 与 `shell.page` 时，自动升级为“新会话”下方、“工作区”上方的全局入口，无需先打开 Session。
 
 > 当前版本：`0.1.0-alpha.6`。兼容性通过不等于安全审计通过。
@@ -45,7 +45,7 @@ dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.6
 
 ## 为什么需要 Automation Center
 
-Automation 不属于某个聊天 Session。`alpha.6` 因此把原版 rc.8 的权威管理入口放进全局 Settings；增强 Shell 还可以把同一页面提升到左侧一级入口：
+Automation 不属于某个聊天 Session。`alpha.6` 因此把原版 DSH 的权威管理入口放进全局 Settings；增强 Shell 还可以把同一页面提升到左侧一级入口：
 
 - 无需先打开 Session；
 - 跨 Workspace 查看任务、计划、最近运行和失败项；
@@ -111,7 +111,7 @@ Automation 不属于某个聊天 Session。`alpha.6` 因此把原版 rc.8 的权
 
 ```text
 DSH Surface Adapter
-  ├─ stock rc.8: settings.section + conversation.view shortcut
+  ├─ stock 0.1.0-rc.8 + 0.1.1-rc.2: settings.section + conversation.view shortcut
   └─ enhanced: sidebar.primary.action + shell.page
                          │
                          ▼
@@ -132,12 +132,13 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run
 
 | 目标 | 安装 | 界面 | 状态 |
 |---|---|---|---|
-| 原版 DSH `0.1.0-rc.8` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.5 会话模式实机通过；Alpha.6 Settings 自动化契约通过，实机复验待完成 |
-| 原版 DSH `0.1.0-rc.8` / Desktop | 无需 Patch | Settings 全局页 + Session 快捷标签 | 待 rc.8 Desktop 重新实机验收 |
+| 原版 DSH `0.1.0-rc.8` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.6 完整 Web 端到端通过 |
+| 原版 DSH `0.1.1-rc.2` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | npm 固定版本安装、Host/Client 激活、无 Workspace 空状态和浏览器 console 验收通过；完整 Agent Run 未重复执行 |
+| macOS DSH Desktop `2.0.1` | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.6 真实模型端到端与三次冷启动通过；不等同于 rc.2 Desktop 验收 |
 | 提供两个 Shell Slot 的 DSH / Web | 无需插件改动 | 全局根入口和独立页面 | 已观察通过 |
 | Windows / Linux 原生 Desktop | — | 随目标 DSH 能力自动选择 | 尚未实机验收 |
 
-原版 rc.8 没有 `sidebar.primary.action` 和 `shell.page`，所以插件无法只靠公开 API 在“新会话”下方增加根入口。为了保证可卸载、可维护和主题兼容，本项目不使用 DOM 注入模拟该入口。两个 Slot 一旦进入 DSH 上游，同一个 npm 包会自动启用全局中心模式。
+截至 `0.1.1-rc.2`，原版 DSH 仍没有 `sidebar.primary.action` 和 `shell.page`，所以插件无法只靠公开 API 在“新会话”下方增加根入口。为了保证可卸载、可维护和主题兼容，本项目不使用 DOM 注入模拟该入口。两个 Slot 一旦进入 DSH 上游，同一个 npm 包会自动启用全局中心模式。
 
 精确的通过、阻塞和未运行项见 [Alpha.6 验收结果](docs/acceptance-results-2026-08-23-alpha.6.md)；Alpha.5 实机基线保留在[上一版记录](docs/acceptance-results-2026-08-20.md)。
 
@@ -168,12 +169,12 @@ pnpm install
 pnpm check
 ```
 
-CI 在 Linux、macOS 和 Windows 上执行类型检查、测试、构建与仓库检查，并把打包后的插件安装到未修改的 DSH rc.8 隔离 Profile。Release 工作流生成固定 tarball、SHA-256、SPDX SBOM、GitHub/Sigstore 制品证明，并通过 npm Trusted Publishing 发布 provenance。
+CI 在 Linux、macOS 和 Windows 上执行类型检查、测试、构建与仓库检查，并把打包后的插件分别安装到未修改的 DSH `0.1.0-rc.8` 与 `0.1.1-rc.2` 隔离 Profile。Alpha.6 Release 已提供固定 tarball、SHA-256、SPDX SBOM 与 GitHub/Sigstore 制品证明；npm 固定版本已发布。本次首次 npm 发布由已登录 CLI 完成，因此不把它误报为 npm provenance。
 
 ## 文档
 
 - [验收标准](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-criteria.zh-CN.md)
-- [验收结果](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-20.md)
+- [Alpha.6 验收结果（含 rc.2 复验）](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-23-alpha.6.md)
 - [技术方案](https://github.com/usersx/dsh-automation-center/blob/main/docs/technical-design.zh-CN.md)
 - [发布流程](https://github.com/usersx/dsh-automation-center/blob/main/docs/releasing.md)
 - [更新日志](CHANGELOG.md)
@@ -195,7 +196,8 @@ dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.6.tgz
 
 ## 已知限制
 
-- 原版 rc.8 可在 Settings 提供全局管理页，但左侧栏一级入口仍需要上游提供两个通用 Shell Slot。
+- 原版 DSH `0.1.1-rc.2` 可在 Settings 提供全局管理页，但左侧栏一级入口仍需要上游提供两个通用 Shell Slot。
+- `0.1.1-rc.2` Web 已完成安装与激活 smoke；rc.2 Desktop 和 rc.2 真实模型完整 Run 尚未实机验收。
 - 第一版不提供分布式 Scheduler、远程执行节点或云端凭证托管。
 - 取消不会撤销已经发生的文件修改或外部调用。
 - 当前仍是 Alpha；稳定版发布条件以验收文档为准。

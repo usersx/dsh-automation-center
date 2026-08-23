@@ -4,6 +4,12 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Changed
+
+- Validate stock compatibility against both the minimum supported DSH `0.1.0-rc.8` and the current `0.1.1-rc.2` in CI.
+- Record the public alpha.6 Release, npm checksums and the exact rc.2 install/activation smoke without overstating unrun Desktop or Agent-run cases.
+- Clarify that alpha.6 has a GitHub/Sigstore build attestation but its bootstrap npm publication did not produce observed npm registry provenance.
+
 ## [0.1.0-alpha.6] - 2026-08-23
 
 ### Added

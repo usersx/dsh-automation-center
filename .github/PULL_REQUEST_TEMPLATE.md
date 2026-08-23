@@ -4,7 +4,7 @@ Describe the user-visible result.
 
 ## Compatibility
 
-- [ ] Stock DSH `0.1.0-rc.8` Conversation mode remains loadable.
+- [ ] Stock DSH `0.1.0-rc.8` and current `0.1.1-rc.2` compatibility surfaces remain loadable.
 - [ ] Native Shell mode remains loadable when `sidebar.primary.action` and `shell.page` are present.
 - [ ] Legacy `@dsh-external/dsh-automation` conflict behavior is unchanged or intentionally migrated.
 

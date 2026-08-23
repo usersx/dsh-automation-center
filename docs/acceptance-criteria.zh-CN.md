@@ -4,7 +4,7 @@
 
 目标插件需要在 DSH Web 和 DSH Desktop 中提供自动化任务中心，并按 DSH 实际扩展能力选择界面：
 
-- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 通过公开的 `settings.section` 提供全局管理页，并以 `conversation.view` 提供 Session 快捷入口；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 至当前 `0.1.1-rc.2` 通过公开的 `settings.section` 提供全局管理页，并以 `conversation.view` 提供 Session 快捷入口；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
 - **全局中心模式**：DSH 同时提供 `sidebar.primary.action` 与 `shell.page` 时，提供完整的全局 Automation Center：
   - 入口位于左侧栏“新会话”正下方、“工作区”正上方；
   - 与“新会话”同属一级入口；
@@ -17,11 +17,12 @@
 
 原版兼容发布必须通过 A 类、D–S 类中适用的 P0 以及下方 SC 条目；B/C 的根级入口条目属于全局中心模式。宣称“完整全局中心稳定版”时，全部 P0 条目都必须通过且不得触发一票否决项。
 
-### SC. 原版 rc.8 兼容模式
+### SC. 原版 DSH 兼容模式
 
 | ID | 验收项 | 通过标准 |
 |---|---|---|
-| SC-01 | 无 Patch 安装 | 未修改的 DSH `0.1.0-rc.8` 可以直接安装并启动，不要求用户替换 DSH 构建 |
+| SC-01 | 无 Patch 安装 | 未修改的最低支持版 `0.1.0-rc.8` 与当前最新版 `0.1.1-rc.2` 都可以直接安装并启动，不要求用户替换 DSH 构建 |
+| SC-01A | 新版跟进 | DSH 发布新 RC 后，CI 增加该精确 Tag；实机结果明确区分安装/激活 smoke 与完整 Agent Run，不以前者代替后者 |
 | SC-02 | 原生扩展点 | 使用 `settings.section` 注册全局管理页、`conversation.view` 注册快捷标签，不扫描或修改 DSH DOM |
 | SC-03 | Surface 协商 | 始终注册 Settings；`ctx.layout` 提供 Shell 导航能力时再选择全局 Shell 中心，否则保留 Conversation 快捷入口 |
 | SC-04 | 功能同源 | 两种界面复用同一 AutomationEngine、RPC、数据和任务行为，不形成两套调度器 |

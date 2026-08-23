@@ -14,7 +14,7 @@ DSH Automation Center adds scheduled, auditable Agent runs to [DeepSeek Harness]
 
 The same package selects the deepest native surface available, without DOM injection or Sidebar replacement:
 
-- **Stock compatibility mode:** unmodified DSH `0.1.0-rc.8` exposes a global **Settings → Automations** section that works without a Session; the **Automation** Conversation tab remains a shortcut. No Shell Page Patch is required.
+- **Stock compatibility mode:** unmodified DSH from `0.1.0-rc.8` through the current `0.1.1-rc.2` exposes a global **Settings → Automations** section that works without a Session; the **Automation** Conversation tab remains a shortcut. No Shell Page Patch is required.
 - **Global center mode:** when DSH exposes `sidebar.primary.action` and `shell.page`, the plugin automatically moves to a root action below **New Session** and above **Workspaces**.
 
 > Current version: `0.1.0-alpha.6`. Compatibility validation is not a security audit.
@@ -86,7 +86,7 @@ The following three screenshots show **global center mode** when both Shell slot
 
 ```text
 DSH Surface Adapter
-  ├─ stock rc.8: settings.section + conversation.view shortcut
+  ├─ stock 0.1.0-rc.8 + 0.1.1-rc.2: settings.section + conversation.view shortcut
   └─ enhanced: sidebar.primary.action + shell.page
                          │
                          ▼
@@ -105,12 +105,13 @@ The Host-side `AutomationEngine` is the deep module. Both Client adapters, loopb
 
 | Target | Install | Surface | Status |
 |---|---|---|---|
-| stock DSH `0.1.0-rc.8` / Web | no patch | global Settings section + Conversation shortcut | alpha.5 Conversation mode observed pass; alpha.6 Settings contract automated, runtime re-validation pending |
-| stock DSH `0.1.0-rc.8` / Desktop | no patch | global Settings section + Conversation shortcut | rc.8 Desktop re-validation pending |
+| stock DSH `0.1.0-rc.8` / Web | no patch | global Settings section + Conversation shortcut | alpha.6 full Web end-to-end pass |
+| stock DSH `0.1.1-rc.2` / Web | no patch | global Settings section + Conversation shortcut | fixed npm install, Host/Client activation, no-Workspace empty state and browser-console checks pass; full Agent Run not repeated |
+| macOS DSH Desktop `2.0.1` | no patch | global Settings section + Conversation shortcut | alpha.6 real-model end-to-end and three cold starts pass; this is not an rc.2 Desktop result |
 | DSH exposing both Shell slots / Web | same package | global root page | observed pass |
 | native Windows / Linux Desktop | — | selected from target capability | not yet observed |
 
-Stock rc.8 has no `sidebar.primary.action` or `shell.page`, so a plugin cannot add a true Sidebar root action through public APIs. It can still provide global management through the native `settings.section`. This project deliberately avoids a brittle DOM-injection imitation. Once the generic Shell slots land upstream, the same npm package enables Sidebar global-center mode automatically.
+As of `0.1.1-rc.2`, stock DSH still has no `sidebar.primary.action` or `shell.page`, so a plugin cannot add a true Sidebar root action through public APIs. It can still provide global management through the native `settings.section`. This project deliberately avoids a brittle DOM-injection imitation. Once the generic Shell slots land upstream, the same npm package enables Sidebar global-center mode automatically.
 
 See the exact [alpha.6 acceptance results](docs/acceptance-results-2026-08-23-alpha.6.md), including blocked and unrun cases. The [alpha.5 record](docs/acceptance-results-2026-08-20.md) remains the observed runtime baseline.
 
@@ -131,12 +132,12 @@ pnpm install
 pnpm check
 ```
 
-CI runs typecheck, tests, build and repository validation on Linux, macOS and Windows, then installs the tarball into an isolated unmodified DSH rc.8 profile. Releases include a fixed tarball, SHA-256, SPDX SBOM, GitHub/Sigstore build attestation and npm provenance through Trusted Publishing.
+CI runs typecheck, tests, build and repository validation on Linux, macOS and Windows, then installs the tarball into isolated unmodified DSH `0.1.0-rc.8` and `0.1.1-rc.2` profiles. The alpha.6 Release includes a fixed tarball, SHA-256, SPDX SBOM and GitHub/Sigstore build attestation, and its fixed npm version is public. The first npm publication used an authenticated CLI, so this project does not mislabel it as npm provenance.
 
 ## Documentation
 
 - [Acceptance criteria (Chinese)](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-criteria.zh-CN.md)
-- [Acceptance results](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-20.md)
+- [Alpha.6 acceptance results, including rc.2 re-validation](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-23-alpha.6.md)
 - [Technical design (Chinese)](https://github.com/usersx/dsh-automation-center/blob/main/docs/technical-design.zh-CN.md)
 - [Release process](https://github.com/usersx/dsh-automation-center/blob/main/docs/releasing.md)
 - [Changelog](CHANGELOG.md)
@@ -147,7 +148,8 @@ CI runs typecheck, tests, build and repository validation on Linux, macOS and Wi
 
 ## Known limitations
 
-- Stock rc.8 provides global management in Settings; a Sidebar root action still requires the two generic upstream slots.
+- Stock DSH `0.1.1-rc.2` provides global management in Settings; a Sidebar root action still requires the two generic upstream slots.
+- The `0.1.1-rc.2` Web install and activation smoke passes; rc.2 Desktop and a full rc.2 real-model Run remain unobserved.
 - The first release has no distributed scheduler, remote workers or cloud credential vault.
 - Cancellation cannot undo file changes or external calls that already occurred.
 - This remains an Alpha; stable release gates are defined in the acceptance documents.

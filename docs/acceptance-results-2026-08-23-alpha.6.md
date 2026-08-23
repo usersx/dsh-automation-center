@@ -40,6 +40,22 @@
 | 浅色 / 深色 | PASS | 使用原版 DeepSeek 主题检查列表、表单、按钮和错误态，无鲸鱼娘皮肤干扰 |
 | 浏览器错误 | PASS | 最终成功流程浏览器 console 为空，无 page error 或渲染崩溃 |
 
+## Web 0.1.1-rc.2 发布后兼容性复验
+
+官方 `dsh-v0.1.1-rc.2`（commit `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`）发布后，使用公开 npm 制品在完全隔离的临时 `HOME` 与 `DSH_HOME` 中补做了最新宿主 smoke：
+
+| 场景 | 状态 | 观察证据 |
+|---|---|---|
+| 官方版本锁定 | PASS | `@deepseek-ai/dsh@0.1.1-rc.2`，Node.js `24.19.0` |
+| npm 固定版本安装 | PASS | `dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.6` 成功；Profile 只有一条插件 Bundle 配置 |
+| Host / Client 激活 | PASS | rc.2 Web 正常启动；“设置 → 自动化”出现并渲染 Automation Center |
+| 无 Session / 无 Workspace | PASS | 已注册 0 个 Workspace 时页面可打开，“新建自动化”与空状态创建按钮明确禁用 |
+| 浏览器错误 | PASS | 进入 Automation Center 后 console 的 warning/error 列表为空 |
+| 原版 Sidebar 根入口 | NOT AVAILABLE | rc.2 源码仍未声明 `sidebar.primary.action` 或 `shell.page`；插件按设计使用 Settings + Conversation，不进行 DOM 注入 |
+| 完整 Agent Run | NOT RUN | 本轮 clean Profile 未配置 Workspace 与模型；不能把安装/激活 smoke 记成执行链路通过 |
+
+该复验确认 alpha.6 能直接安装并激活于最新 rc.2，但不替代下方 Desktop 与真实 Agent Run 的未执行项。
+
 ## macOS Desktop 2.0.1 端到端
 
 | 场景 | 状态 | 观察证据 |
@@ -67,15 +83,17 @@
 
 ## 发布证据
 
-发布完成后在本节补充：
-
-- GitHub Release、release workflow 运行链接与资产列表。
-- npm registry 的固定版本、integrity、shasum、tarball URL 和 provenance。
-- 从公开 npm 将 `dsh-automation-center@0.1.0-alpha.6` 安装到全新 rc.8 Profile 的结果。
+- [GitHub Release v0.1.0-alpha.6](https://github.com/usersx/dsh-automation-center/releases/tag/v0.1.0-alpha.6)，目标 commit `ffc0be5752a5441c19a34ea5f49984c1464442c4`。
+- [最终 Release workflow](https://github.com/usersx/dsh-automation-center/actions/runs/32621613824) 为 success；Release 附带 tarball、SHA-256 文件和 SPDX JSON SBOM，tarball 另有 GitHub/Sigstore build attestation。
+- GitHub Release tarball：246,953 bytes；SHA-256 `320ab44dc25f628f646d158984e2525d0a141b63e934c7dc6f4f9972edffcc59`。
+- npm 固定版本：`dsh-automation-center@0.1.0-alpha.6`；integrity `sha512-d/hHihL/b2U36TDTxQkYyDdH4sLRI38ytHt5EnH7kruTSRdXWQrSx+vRc9nIc0YjsRhBkjEEu7LGmqMTRmoWzA==`；shasum `921cbbc01434b4e8d376ce5726276f77f844da30`；[registry tarball](https://registry.npmjs.org/dsh-automation-center/-/dsh-automation-center-0.1.0-alpha.6.tgz)。
+- 从公开 npm 安装固定版本到全新 rc.8 Profile：PASS；安装到全新 rc.2 Profile并完成 Client 激活 smoke：PASS。
+- 本次首次 npm 发布由已登录 CLI 完成；npm registry provenance 未观察到，不能用 GitHub build attestation 替代或误报。
 
 ## 未执行，不能算通过
 
 - Windows / Linux 原生 Desktop。
+- DSH `0.1.1-rc.2` Desktop 与 rc.2 clean Profile 的完整真实模型 Agent Run。
 - 运行中卸载、页面打开时卸载，以及在 Supervisor 每个阶段分别强制终止 Host 的全部实机画面。
 - 真实系统权限弹窗中的人工拒绝、真实模型超时（协议层权限/超时已有自动化测试）。
 - 与已启用的旧 `@dsh-external/dsh-automation` 同时运行；当前建议先禁用旧插件，避免两个调度器并存。

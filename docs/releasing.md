@@ -14,12 +14,12 @@ No long-lived `NPM_TOKEN` is required or expected.
 
 1. Update `package.json`, both READMEs and `CHANGELOG.md` to the same version.
 2. Run `pnpm check` on a supported Node version.
-3. Confirm the stock rc.8 install job passes on GitHub Actions.
+3. Confirm the stock DSH install matrix passes for the minimum supported tag (`dsh-v0.1.0-rc.8`) and the current latest tag (`dsh-v0.1.1-rc.2`).
 4. Confirm the acceptance record distinguishes automated, observed, blocked and unrun cases.
 5. Merge to `main`, then create a GitHub Release whose tag is exactly `v<package version>`.
 6. Mark Alpha/Beta/RC releases as pre-releases; stable versions are normal releases.
 
-The workflow re-runs checks, packs one tarball, generates a checksum and SPDX JSON SBOM, attests the tarball with GitHub/Sigstore, publishes to npm with provenance, and attaches the evidence to the GitHub Release.
+The workflow re-runs checks, packs one tarball, generates a checksum and SPDX JSON SBOM, attests the tarball with GitHub/Sigstore, publishes to npm with provenance once the Trusted Publisher is configured, and attaches the evidence to the GitHub Release. Alpha.6 was the package bootstrap release and was first published through an authenticated npm CLI; its GitHub attestation must not be described as npm registry provenance.
 
 ## Verification
 
