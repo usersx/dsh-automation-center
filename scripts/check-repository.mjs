@@ -39,5 +39,8 @@ const release = await readFile('.github/workflows/release.yml', 'utf8')
 for (const marker of ['--provenance', 'sbom-action', 'attest-build-provenance', 'sha256sum']) {
   if (!release.includes(marker)) throw new Error(`release workflow is missing supply-chain marker: ${marker}`)
 }
+if (!release.includes('npm publish "./${{ steps.pack.outputs.tarball }}"')) {
+  throw new Error('release workflow must publish the verified local tarball with an explicit ./ path')
+}
 
 console.log(`repository check passed (${requiredFiles.length} required files)`)

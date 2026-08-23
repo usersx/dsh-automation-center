@@ -59,7 +59,10 @@ jobs:
         with:
           subject-path: ${{ steps.pack.outputs.tarball }}
       - name: Publish to npm with provenance
-        run: npm publish "${{ steps.pack.outputs.tarball }}" --access public --tag latest --provenance
+        # npm treats a bare path beginning with `dist/` as a package spec in
+        # recent releases. Prefix the artifact with `./` so it is always the
+        # tarball produced by the verified pack step.
+        run: npm publish "./${{ steps.pack.outputs.tarball }}" --access public --tag latest --provenance
       - name: Attach package, checksum, and SBOM to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
