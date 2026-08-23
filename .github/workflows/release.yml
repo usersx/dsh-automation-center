@@ -47,6 +47,22 @@ jobs:
           test -n "${TARBALL}"
           sha256sum "${TARBALL}" > "${TARBALL}.sha256"
           echo "tarball=${TARBALL}" >> "${GITHUB_OUTPUT}"
+      - name: Check public npm state
+        id: registry
+        env:
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+          TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          if PUBLISHED_SHASUM=$(npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" dist.shasum --registry https://registry.npmjs.org 2>/dev/null); then
+            LOCAL_SHASUM=$(sha1sum "${TARBALL}" | cut -d ' ' -f 1)
+            test "${PUBLISHED_SHASUM}" = "${LOCAL_SHASUM}"
+            echo "publish=false" >> "${GITHUB_OUTPUT}"
+            echo "Verified existing npm artifact ${PACKAGE_NAME}@${PACKAGE_VERSION} (${LOCAL_SHASUM})"
+          else
+            npm ping --registry https://registry.npmjs.org
+            echo "publish=true" >> "${GITHUB_OUTPUT}"
+          fi
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
@@ -59,6 +75,7 @@ jobs:
         with:
           subject-path: ${{ steps.pack.outputs.tarball }}
       - name: Publish to npm with provenance
+        if: steps.registry.outputs.publish == 'true'
         # npm treats a bare path beginning with `dist/` as a package spec in
         # recent releases. Prefix the artifact with `./` so it is always the
         # tarball produced by the verified pack step.
