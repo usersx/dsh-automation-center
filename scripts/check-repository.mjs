@@ -42,5 +42,8 @@ for (const marker of ['--provenance', 'sbom-action', 'attest-build-provenance', 
 if (!release.includes('npm publish "./${{ steps.pack.outputs.tarball }}"')) {
   throw new Error('release workflow must publish the verified local tarball with an explicit ./ path')
 }
+for (const marker of ['Check public npm state', "if: steps.registry.outputs.publish == 'true'", 'PUBLISHED_SHASUM', 'LOCAL_SHASUM']) {
+  if (!release.includes(marker)) throw new Error(`release workflow is missing idempotent-publish marker: ${marker}`)
+}
 
 console.log(`repository check passed (${requiredFiles.length} required files)`)
