@@ -8,7 +8,7 @@ Automation Center 是 DSH 的全局一级页面。Automation 是持久化任务�
 
 ### 原版兼容 Surface
 
-未修改的 DSH `0.1.0-rc.8` 已公开全局 `settings.section` 和 Session 作用域的 `conversation.view`。插件始终注册 Settings 管理页，并在两个 Shell Slot 不可用时保留 Session 快捷入口：
+未修改的 DSH `0.1.0-rc.8` 至当前 `0.1.1-rc.2` 已公开全局 `settings.section` 和 Session 作用域的 `conversation.view`。插件始终注册 Settings 管理页，并在两个 Shell Slot 不可用时保留 Session 快捷入口：
 
 ```text
 settings.section / automation  -> Automation Center（权威全局入口）
@@ -94,4 +94,4 @@ Scheduler、Loopback RPC、Agent Tools 和 Client UI 都复用 `snapshot` / `dis
 
 ## 发布边界
 
-当前插件提供可安装的 Host/Web Bundle，并能在未经修改的 DSH `0.1.0-rc.8` 上使用 Settings 全局管理页和 Conversation 快捷入口。Shell Patch/未来上游 Slot 只决定是否能展示 Sidebar 根入口，不再是安装前置条件。Release 必须分别声明 Stock Compatible 与 Global Center 的验收结果，不能把 Settings 页面描述成 Sidebar 根入口。只有 [验收标准](acceptance-criteria.zh-CN.md) 中对应发布声明的 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。
+当前插件提供可安装的 Host/Web Bundle，并能在未经修改的 DSH `0.1.0-rc.8` 与 `0.1.1-rc.2` 上使用 Settings 全局管理页和 Conversation 快捷入口。`0.1.1-rc.2` 仍未提供 `sidebar.primary.action` 与 `shell.page`；Shell Patch/未来上游 Slot 只决定是否能展示 Sidebar 根入口，不再是安装前置条件。Release 必须分别声明 Stock Compatible 与 Global Center 的验收结果，不能把 Settings 页面描述成 Sidebar 根入口。只有 [验收标准](acceptance-criteria.zh-CN.md) 中对应发布声明的 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。
