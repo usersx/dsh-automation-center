@@ -513,7 +513,9 @@ export function AutomationView({
 }: AutomationViewProps): JSX.Element {
   const state = useAutomationState(value => value)
   const [showCreate, setShowCreate] = useState(false)
-  const [editingAutomation, setEditingAutomation] = useState<AutomationViewModel>()
+  // Resolve the durable identity against every fresh snapshot so a background
+  // poll cannot leave the editor holding an obsolete revision.
+  const [editingAutomationId, setEditingAutomationId] = useState<string>()
   const [busyKey, setBusyKey] = useState<string>()
   const [actionError, setActionError] = useState<string>()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string>()
@@ -526,6 +528,10 @@ export function AutomationView({
   }, [refresh])
 
   const snapshot = state.snapshot
+  const editingAutomation = useMemo(
+    () => snapshot?.automations.find(item => String(item.id) === editingAutomationId),
+    [editingAutomationId, snapshot],
+  )
   const filteredSnapshot = useMemo(() => snapshot === undefined
     ? undefined
     : {
@@ -556,7 +562,7 @@ export function AutomationView({
       await mutateAutomation(id, mutation)
       if (mutation === 'delete') {
         setConfirmDeleteId(undefined)
-        if (editingAutomation?.id === id) setEditingAutomation(undefined)
+        if (editingAutomationId === id) setEditingAutomationId(undefined)
       }
     })
   }
@@ -584,13 +590,13 @@ export function AutomationView({
     if (automation === undefined) return
     await perform(actionKey('update', automation.id), async () => {
       await updateAutomation(automation.id, automation.revision, input)
-      setEditingAutomation(undefined)
+      setEditingAutomationId(undefined)
     })
   }
   const onEdit = (automation: AutomationViewModel): void => {
     setShowCreate(false)
     setConfirmDeleteId(undefined)
-    setEditingAutomation(automation)
+    setEditingAutomationId(String(automation.id))
   }
 
   if (snapshot === undefined && (state.phase === 'idle' || state.phase === 'loading')) {
@@ -627,7 +633,7 @@ export function AutomationView({
           </div>
         </div>
         <button className="dsh-automation-button dsh-automation-button--primary" type="button" disabled={snapshot.workspaces.length === 0} title={snapshot.workspaces.length === 0 ? t('form.workspaceEmpty') : undefined} onClick={() => {
-          setEditingAutomation(undefined)
+          setEditingAutomationId(undefined)
           setShowCreate(value => !value)
         }}>
           {showCreate ? <PauseIcon /> : <PlusIcon />}
@@ -675,7 +681,7 @@ export function AutomationView({
           defaultModel={snapshot.defaultModel}
           t={t}
           busy={busyKey === actionKey('update', editingAutomation.id)}
-          onCancel={() => setEditingAutomation(undefined)}
+          onCancel={() => setEditingAutomationId(undefined)}
           onSubmit={onUpdate}
         />
       )}

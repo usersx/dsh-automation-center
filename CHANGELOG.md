@@ -23,6 +23,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 ### Fixed
 
 - A missing Workspace, Agent preset or selected model is shown as blocked before Run admission rather than failing after Session creation.
+- Settings panels now reflow against the Automation Center slot width, so edit and run actions remain visible even when the browser viewport itself is wide.
+- The editor resolves the latest automation revision while background snapshots refresh, avoiding stale edit state during long-running Settings sessions.
 
 ## [0.1.0-alpha.5] - 2026-08-20
 

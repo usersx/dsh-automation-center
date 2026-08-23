@@ -35,3 +35,11 @@ test('stock DSH conversation fallback opts into the native composer overlay cont
     'the stock Session composer must not cover Automation actions',
   )
 })
+
+test('the Automation Center responds to its slot container, not only the browser viewport', () => {
+  assert.match(styleSource, /container-name:dsh-automation/)
+  assert.match(styleSource, /container-type:inline-size/)
+  assert.match(styleSource, /@container dsh-automation \(max-width:1100px\)/)
+  assert.match(styleSource, /@container dsh-automation \(max-width:760px\)/)
+  assert.match(styleSource, /@container dsh-automation \(max-width:480px\)/)
+})
