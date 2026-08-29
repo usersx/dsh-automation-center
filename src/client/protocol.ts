@@ -74,6 +74,7 @@ export interface AutomationRunViewModel {
   readonly automationName: string
   readonly status: AutomationRunStatus
   readonly attempt?: number
+  readonly sequence?: number
   readonly outcome?: AutomationOutcome
   readonly attention?: AutomationAttention
   readonly effect?: {
@@ -86,6 +87,15 @@ export interface AutomationRunViewModel {
   readonly leaseExpiresAt?: string
   readonly sideEffectsPossible?: boolean
   readonly effectiveModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
+  readonly effectiveContext?: {
+    readonly actor: { readonly kind: 'automation'; readonly sourceKind: 'agent' | 'web'; readonly sourceId: string }
+    readonly permissionPreset: AutomationPermission
+    readonly agentPreset: string
+    readonly tools: readonly string[]
+    readonly approvalPolicy: 'never'
+    readonly backgroundProcesses: false
+    readonly capturedAt: string
+  }
   readonly trigger: 'schedule' | 'manual' | 'catch-up'
   readonly scheduledFor: string
   readonly admittedAt?: string

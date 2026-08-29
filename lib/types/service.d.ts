@@ -165,6 +165,8 @@ export declare class AutomationService {
     private startRun;
     private executeRun;
     private newLease;
+    /** Persist one monotonic lifecycle revision, then publish a catch-up-safe event. */
+    private commitRun;
     private persistRunPhase;
     private refreshRunLease;
     private armNextTimer;

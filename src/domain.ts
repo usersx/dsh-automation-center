@@ -117,6 +117,7 @@ const automationRunShape = z.object({
   scheduledFor: instant,
   admittedAt: instant,
   attempt: z.number().int().positive(),
+  sequence: z.number().int().nonnegative(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled', 'interrupted']),
   phase: runPhase.nullable(),
   lease: z.object({
@@ -146,6 +147,19 @@ const automationRunShape = z.object({
     model: nonBlank,
     reasoningEffort: nonBlank.optional(),
   }).nullable(),
+  effectiveContext: z.object({
+    actor: z.object({
+      kind: z.literal('automation'),
+      sourceKind: z.enum(['agent', 'web']),
+      sourceId: nonBlank,
+    }),
+    permissionPreset,
+    agentPreset: nonBlank,
+    tools: z.array(nonBlank),
+    approvalPolicy: z.literal('never'),
+    backgroundProcesses: z.literal(false),
+    capturedAt: instant,
+  }).nullable(),
 })
 
 export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) => {
@@ -165,9 +179,11 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
     ...record,
     admittedAt: record.admittedAt ?? record.scheduledFor,
     attempt: record.attempt ?? 1,
+    sequence: record.sequence ?? 0,
     phase: record.phase ?? (status === 'queued' ? 'claim' : status === 'running' ? 'executing' : null),
     lease: record.lease ?? null,
     effectiveModel: record.effectiveModel ?? null,
+    effectiveContext: record.effectiveContext ?? null,
     outcome,
     attention: record.attention ?? (
       outcome === 'failed' || outcome === 'interrupted' ? 'failed'
@@ -342,6 +358,7 @@ function queuedRun(
     scheduledFor,
     admittedAt: scheduledFor,
     attempt: 1,
+    sequence: 0,
     status: 'queued',
     phase: 'claim',
     lease: null,
@@ -366,6 +383,7 @@ function queuedRun(
     effect: { status: 'none', updatedAt: scheduledFor },
     unread: true,
     effectiveModel: null,
+    effectiveContext: null,
   })
 }
 

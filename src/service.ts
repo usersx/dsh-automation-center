@@ -16,7 +16,7 @@ import {
   deleteDefinition,
   updateDefinition,
 } from './domain.ts'
-import { executeAutomationRun } from './executor.ts'
+import { executeAutomationRun, unattendedToolNames } from './executor.ts'
 import {
   legacyAutomationDomainSpec,
   type LegacyDefinition,
@@ -26,6 +26,8 @@ import {
 import { latestDueOccurrence, nextOccurrence } from './recurrence.ts'
 import type {
   AutomationDefinition,
+  AutomationLifecycleEvent,
+  AutomationLifecycleKind,
   AutomationCommandReceipt,
   AutomationCommandName,
   AutomationModelSelection,
@@ -393,8 +395,7 @@ export class AutomationService {
         && (candidate.status === 'queued' || candidate.status === 'running')
       ))
       if (alreadyActive) throw new Error('The automation already has a queued or running run.')
-      await this.runs.put(value.id, value)
-      return value
+      return this.commitRun(value, 'admitted')
     }, signal)
     this.requestPump()
     return run
@@ -554,8 +555,7 @@ export class AutomationService {
       throwIfCancelled(signal)
       if (!run.unread) return run
       const next = { ...run, unread: false }
-      await this.runs.put(runId, next)
-      return next
+      return this.commitRun(next, 'attention')
     }, signal)
   }
 
@@ -586,8 +586,7 @@ export class AutomationService {
         attention: 'none',
         unread: false,
       }
-      await this.runs.put(runId, cancelled)
-      return cancelled
+      return this.commitRun(cancelled, 'terminal')
     }, signal)
   }
 
@@ -883,6 +882,7 @@ export class AutomationService {
           ...old,
           admittedAt: old.scheduledFor,
           attempt: 1,
+          sequence: 0,
           outcome: old.status === 'queued' || old.status === 'running'
             ? 'pending'
             : old.status === 'succeeded'
@@ -901,6 +901,7 @@ export class AutomationService {
             status: 'none',
             updatedAt: old.finishedAt ?? old.startedAt ?? old.scheduledFor,
           },
+          effectiveContext: null,
           targetSnapshot: { ...old.targetSnapshot, modelPolicy, runTimeoutMinutes: defaultTimeout },
           phase: old.status === 'queued' ? 'claim' : old.status === 'running' ? 'executing' : null,
           lease: null,
@@ -988,18 +989,18 @@ export class AutomationService {
       const reason = overlapping
         ? { code: 'overlap', message: 'Skipped because the previous run is still active.' }
         : { code: 'misfire', message: 'Skipped because the host resumed outside the catch-up window.' }
-      await this.runs.put(candidate.id, {
+      await this.commitRun({
         ...candidate,
         status: 'skipped',
         finishedAt: now,
         error: reason,
         outcome: 'skipped',
         attention: 'review',
-      })
+      }, 'terminal')
       await this.pruneWorkspaceHistory(candidate.targetSnapshot.workspaceId)
       return
     }
-    await this.runs.put(candidate.id, candidate)
+    await this.commitRun(candidate, 'admitted')
   }
 
   private async startQueuedRuns(): Promise<void> {
@@ -1066,7 +1067,7 @@ export class AutomationService {
                 : { ...current.effect, status: 'unknown', updatedAt: toIso() },
               unread: true,
             }
-            await this.runs.put(run.id, failed)
+            await this.commitRun(failed, 'terminal')
             await this.archiveRunSession(failed)
             await this.pruneWorkspaceHistory(current.targetSnapshot.workspaceId)
           }
@@ -1086,14 +1087,14 @@ export class AutomationService {
   private async executeRun(run: AutomationRun, signal: AbortSignal): Promise<void> {
     const definition = this.definitions.get(run.automationId)
     if (definition === undefined) {
-      await this.runs.put(run.id, {
+      await this.commitRun({
         ...run,
         status: 'failed',
         finishedAt: toIso(),
         error: { code: 'definition_deleted', message: 'The automation was deleted before this run started.' },
         outcome: 'failed',
         attention: 'failed',
-      })
+      }, 'terminal')
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
       return
     }
@@ -1107,7 +1108,7 @@ export class AutomationService {
       const issue = health.issues[0] ?? {
         code: 'preflight_failed', message: 'The automation target failed preflight.',
       }
-      await this.runs.put(run.id, {
+      await this.commitRun({
         ...run,
         status: 'failed',
         phase: null,
@@ -1118,7 +1119,7 @@ export class AutomationService {
         outcome: 'blocked',
         attention: 'blocked',
         unread: true,
-      })
+      }, 'terminal')
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
       return
     }
@@ -1134,8 +1135,21 @@ export class AutomationService {
       lease: this.newLease(startedAt, false),
       startedAt,
       sessionId,
+      effectiveContext: {
+        actor: {
+          kind: 'automation',
+          sourceKind: definition.createdBy.kind,
+          sourceId: definition.createdBy.sessionId,
+        },
+        permissionPreset: run.targetSnapshot.permissionPreset,
+        agentPreset: run.targetSnapshot.agentPreset,
+        tools: unattendedToolNames(),
+        approvalPolicy: 'never',
+        backgroundProcesses: false,
+        capturedAt: startedAt,
+      },
     }
-    await this.runs.put(run.id, running)
+    await this.commitRun(running, 'phase')
     const completion = await executeAutomationRun(this.ctx, definition, run, {
       runTimeoutMs: run.targetSnapshot.runTimeoutMinutes * 60_000,
       sessionId,
@@ -1195,7 +1209,7 @@ export class AutomationService {
       unread: terminalAttention !== 'none',
       effectiveModel: completion.effectiveModel ?? null,
     }
-    await this.runs.put(run.id, completed)
+    await this.commitRun(completed, 'terminal')
     await this.archiveRunSession(completed)
     await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
   }
@@ -1210,6 +1224,36 @@ export class AutomationService {
     }
   }
 
+  /** Persist one monotonic lifecycle revision, then publish a catch-up-safe event. */
+  private async commitRun(run: AutomationRun, kind: AutomationLifecycleKind): Promise<AutomationRun> {
+    const current = this.runs.get(run.id)
+    const stored: AutomationRun = {
+      ...run,
+      sequence: Math.max(run.sequence, current?.sequence ?? -1) + 1,
+    }
+    await this.runs.put(stored.id, stored)
+    const event: AutomationLifecycleEvent = {
+      kind,
+      runId: stored.id,
+      automationId: stored.automationId,
+      definitionRevision: stored.definitionRevision,
+      sequence: stored.sequence,
+      at: stored.finishedAt ?? stored.lease?.heartbeatAt ?? stored.startedAt ?? stored.admittedAt,
+      workspaceId: stored.targetSnapshot.workspaceId,
+      status: stored.status,
+      phase: stored.phase,
+      outcome: stored.outcome,
+      attention: stored.attention,
+      sessionId: stored.sessionId,
+    }
+    try {
+      this.ctx.emit?.('automation/lifecycle', event)
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`dsh-automation: lifecycle consumer failed for run '${stored.id}': ${asMessage(error)}`)
+    }
+    return stored
+  }
+
   private async persistRunPhase(
     runId: string,
     phase: AutomationRunPhase,
@@ -1218,7 +1262,7 @@ export class AutomationService {
     const current = this.runs.get(runId)
     if (current === undefined || current.status !== 'running') return
     const now = toIso()
-    await this.runs.put(runId, {
+    await this.commitRun({
       ...current,
       phase,
       lease: current.lease === null
@@ -1232,7 +1276,7 @@ export class AutomationService {
       effect: sideEffectsPossible
         ? { ...current.effect, status: 'possible', updatedAt: now }
         : current.effect,
-    })
+    }, 'phase')
   }
 
   private async refreshRunLease(runId: string): Promise<void> {
@@ -1300,14 +1344,14 @@ export class AutomationService {
       if (run.status !== 'running') continue
       const safeToRetry = run.sessionId === null && run.lease?.sideEffectsPossible !== true
       if (safeToRetry) {
-        await this.runs.put(id, {
+        await this.commitRun({
           ...run, status: 'queued', phase: 'claim', lease: null, startedAt: null, error: null,
           attempt: run.attempt + 1, outcome: 'pending', attention: 'none',
           effect: { status: 'none', updatedAt: finishedAt },
-        })
+        }, 'reconciled')
         continue
       }
-      await this.runs.put(id, {
+      await this.commitRun({
         ...run,
         status: 'interrupted',
         phase: null,
@@ -1323,7 +1367,7 @@ export class AutomationService {
           ? run.effect
           : { ...run.effect, status: 'unknown', updatedAt: finishedAt },
         unread: true,
-      })
+      }, 'reconciled')
     }
   }
 

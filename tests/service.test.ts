@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createDefinition, createManualRun, createScheduledRun } from '../src/domain.ts'
 import { AutomationService, type AutomationConfig } from '../src/service.ts'
 import type { LegacyDefinition, LegacyRun } from '../src/legacy.ts'
-import type { AutomationDefinition, AutomationRun } from '../src/types.ts'
+import type { AutomationDefinition, AutomationLifecycleEvent, AutomationRun } from '../src/types.ts'
 
 class MemoryTable<Value> {
   readonly writes: Value[] = []
@@ -95,6 +95,7 @@ async function harness(seed?: {
   domain: MemoryDomain
   archivedSessionIds: string[]
   attachedSessions: Array<{ workspaceId: string; sessionId: string }>
+  lifecycleEvents: AutomationLifecycleEvent[]
   warnings: string[]
   removeSourceAgent(): void
   reopenService(): Promise<AutomationService>
@@ -136,6 +137,7 @@ async function harness(seed?: {
   let liveSourceAgent: typeof sourceAgent | undefined = sourceAgent
   const archivedSessionIds: string[] = []
   const warnings: string[] = []
+  const lifecycleEvents: AutomationLifecycleEvent[] = []
   const runSession = {
     seq: 0,
     events: [] as Array<{ seq: number; type: string; data: Record<string, unknown> }>,
@@ -221,6 +223,9 @@ async function harness(seed?: {
     },
     sessionTitle: { rename: () => {} },
     sessions: { flush: async () => true },
+    emit: (name: string, event: AutomationLifecycleEvent) => {
+      if (name === 'automation/lifecycle') lifecycleEvents.push(event)
+    },
     logger: { warn: (message: string) => { warnings.push(message) } },
   }
   const config = { ...defaults, ...seed?.config }
@@ -231,6 +236,7 @@ async function harness(seed?: {
     domain,
     archivedSessionIds,
     attachedSessions,
+    lifecycleEvents,
     warnings,
     removeSourceAgent: () => { liveSourceAgent = undefined },
     reopenService,
@@ -890,7 +896,7 @@ test('startup recovery archives a run that may have produced side effects and ma
 })
 
 test('supervisor persists every execution phase and clears its lease at terminal completion', async () => {
-  const { service, domain, attachedSessions } = await harness({
+  const { service, domain, attachedSessions, lifecycleEvents } = await harness({
     completeRuns: true,
     config: { maxConcurrentRuns: 1 },
   })
@@ -915,9 +921,26 @@ test('supervisor persists every execution phase and clears its lease at terminal
     assert.equal(domain.runs.get(queued.id)?.outcome, 'unknown')
     assert.equal(domain.runs.get(queued.id)?.attention, 'unknown')
     assert.equal(domain.runs.get(queued.id)?.effect.status, 'completed')
+    assert.deepEqual(domain.runs.get(queued.id)?.effectiveContext, {
+      actor: { kind: 'automation', sourceKind: 'agent', sourceId: scope.sessionId },
+      permissionPreset: 'read-only',
+      agentPreset: 'code',
+      tools: [...domain.runs.get(queued.id)!.effectiveContext!.tools].sort(),
+      approvalPolicy: 'never',
+      backgroundProcesses: false,
+      capturedAt: domain.runs.get(queued.id)!.startedAt,
+    })
+    assert.equal(domain.runs.get(queued.id)!.effectiveContext!.tools.includes('automation_create'), false)
+    assert.equal(domain.runs.get(queued.id)!.effectiveContext!.tools.includes('automation_report_outcome'), true)
     assert.deepEqual(attachedSessions, [{
       workspaceId: 'workspace-1', sessionId: domain.runs.get(queued.id)!.sessionId!,
     }])
+    const runEvents = lifecycleEvents.filter(event => event.runId === queued.id)
+    assert.deepEqual(runEvents.map(event => event.sequence), [1, 2, 3, 4, 5, 6])
+    assert.deepEqual(runEvents.map(event => event.kind), [
+      'admitted', 'phase', 'phase', 'phase', 'phase', 'terminal',
+    ])
+    assert.equal(runEvents.at(-1)?.attention, 'unknown')
   } finally {
     await service.dispose()
   }

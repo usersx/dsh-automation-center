@@ -3,6 +3,7 @@ export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' 
 export type AutomationRunPhase = 'claim' | 'setup' | 'executing' | 'settling' | 'delivery';
 export type AutomationOutcome = 'pending' | 'unknown' | 'no_change' | 'changes_ready' | 'needs_input' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'interrupted' | 'skipped' | 'partial';
 export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown';
+export type AutomationLifecycleKind = 'admitted' | 'phase' | 'terminal' | 'attention' | 'reconciled';
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
 export interface OnceSchedule {
     readonly kind: 'once';
@@ -103,6 +104,19 @@ export interface AutomationRunLease {
     readonly expiresAt: string;
     readonly sideEffectsPossible: boolean;
 }
+export interface AutomationEffectiveContext {
+    readonly actor: {
+        readonly kind: 'automation';
+        readonly sourceKind: 'agent' | 'web';
+        readonly sourceId: string;
+    };
+    readonly permissionPreset: PermissionPreset;
+    readonly agentPreset: string;
+    readonly tools: readonly string[];
+    readonly approvalPolicy: 'never';
+    readonly backgroundProcesses: false;
+    readonly capturedAt: string;
+}
 export interface AutomationRun {
     readonly version: 1;
     readonly id: string;
@@ -115,6 +129,8 @@ export interface AutomationRun {
     readonly admittedAt: string;
     /** One-based execution attempt for this durable occurrence. */
     readonly attempt: number;
+    /** Monotonic lifecycle revision used by event consumers and snapshot catch-up. */
+    readonly sequence: number;
     readonly status: AutomationRunStatus;
     readonly phase: AutomationRunPhase | null;
     readonly lease: AutomationRunLease | null;
@@ -134,6 +150,21 @@ export interface AutomationRun {
     };
     readonly unread: boolean;
     readonly effectiveModel: AutomationModelSelection | null;
+    readonly effectiveContext: AutomationEffectiveContext | null;
+}
+export interface AutomationLifecycleEvent {
+    readonly kind: AutomationLifecycleKind;
+    readonly runId: string;
+    readonly automationId: string;
+    readonly definitionRevision: number;
+    readonly sequence: number;
+    readonly at: string;
+    readonly workspaceId: string;
+    readonly status: AutomationRunStatus;
+    readonly phase: AutomationRunPhase | null;
+    readonly outcome: AutomationOutcome;
+    readonly attention: AutomationAttention;
+    readonly sessionId: string | null;
 }
 export interface CreateAutomationInput {
     readonly id: string;

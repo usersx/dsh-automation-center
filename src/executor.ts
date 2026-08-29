@@ -32,6 +32,11 @@ const UNATTENDED_TOOL_ALLOWLIST = new Set([
   'session_search', 'session_trace', 'session_event_read', 'session_event_search', 'session_event_trace',
 ])
 
+/** Stable, non-secret capability snapshot recorded on every admitted Agent. */
+export function unattendedToolNames(): readonly string[] {
+  return [...UNATTENDED_TOOL_ALLOWLIST].sort()
+}
+
 /** Final scoped denial for capabilities that require a person or spawn another authority boundary. */
 export function unattendedToolGuardReason(name: string, args: unknown): string | undefined {
   if ((name === 'bash' || name === 'pwsh')

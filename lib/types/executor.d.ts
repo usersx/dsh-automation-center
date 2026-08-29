@@ -6,6 +6,8 @@ interface SessionEventLike {
     readonly type: string;
     readonly data: Record<string, any>;
 }
+/** Stable, non-secret capability snapshot recorded on every admitted Agent. */
+export declare function unattendedToolNames(): readonly string[];
 /** Final scoped denial for capabilities that require a person or spawn another authority boundary. */
 export declare function unattendedToolGuardReason(name: string, args: unknown): string | undefined;
 export interface RunCompletion {
