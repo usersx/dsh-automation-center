@@ -52,3 +52,14 @@ The Shell extension remains an upstream enhancement, not an installation prerequ
 - [x] Extend the deadline across the complete job and recover interrupted runs conservatively.
 - [x] Route every mutation through durable idempotent receipts and post-write reconciliation.
 - [ ] Complete alpha.6 stock rc.8 Web/Desktop observed acceptance before promoting beyond Alpha.
+
+## Milestone 6 — Alpha.7 reliability and latest-host compatibility
+
+- [x] Keep legacy deletes tombstoned and validate complete migration plans before writes.
+- [x] Derive expected/admitted/claimed/queue/progress health without a parallel Health entity.
+- [x] Add structured Outcome/Attention, bounded attempts, effect uncertainty, and lifecycle events.
+- [x] Record effective actor/capability and align the model-visible tool catalog with unattended policy.
+- [x] Add isolated Git worktree Review with accept/keep/discard and fail-closed source drift.
+- [x] Install and exercise an intermediate artifact on stock DSH `0.1.2-alpha.1` Web.
+- [ ] Re-run final `0.1.0-alpha.7` artifact on alpha.1 Web and macOS Desktop 2.0.3.
+- [ ] Publish and read back the Alpha.7 GitHub/npm release evidence.

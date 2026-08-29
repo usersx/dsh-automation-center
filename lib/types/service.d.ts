@@ -1,7 +1,7 @@
 /** Durable automation authority: definitions, occurrence claims, clock, and run execution. */
 import type { Context } from '@deepseek-ai/cordis';
 import { type LegacyMigrationSummary } from './legacy.ts';
-import type { AutomationDefinition, AutomationCommandReceipt, AutomationModelSelection, ModelPolicy, AutomationRun, AutomationSchedule, PermissionPreset, UpdateAutomationInput } from './types.ts';
+import type { AutomationDefinition, AutomationCommandReceipt, AutomationModelSelection, ModelPolicy, AutomationRun, AutomationSchedule, PermissionPreset, ReviewMode, UpdateAutomationInput } from './types.ts';
 export declare const AUTOMATION_SESSION_PREFIX = "dsh-automation-session-";
 export interface AutomationConfig {
     readonly maxConcurrentRuns: number;
@@ -18,6 +18,7 @@ export interface CreateRequest {
     readonly permissionPreset?: PermissionPreset;
     readonly agentPreset?: string;
     readonly modelPolicy?: ModelPolicy;
+    readonly reviewMode?: ReviewMode;
     readonly runTimeoutMinutes?: number;
 }
 type UpdateRequest = Omit<UpdateAutomationInput, 'now'> & {
@@ -38,7 +39,7 @@ export type AutomationCommand = {
     readonly requestId: string;
     readonly automationId: string;
 } | {
-    readonly kind: 'cancel-run' | 'mark-read';
+    readonly kind: 'cancel-run' | 'mark-read' | 'review-accept' | 'review-keep' | 'review-discard';
     readonly requestId: string;
     readonly runId: string;
 };
@@ -82,12 +83,19 @@ export interface AutomationModelOption extends AutomationModelSelection {
     }[];
 }
 export interface AutomationHealth {
-    readonly status: 'ready' | 'blocked';
+    readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled';
     readonly issues: readonly {
         readonly code: string;
         readonly message: string;
     }[];
     readonly effectiveModel: AutomationModelSelection | null;
+    readonly expectedAt: string | null;
+    readonly admittedAt: string | null;
+    readonly claimedAt: string | null;
+    readonly lastProgressAt: string | null;
+    readonly overdueByMs: number;
+    readonly queueWaitMs: number | null;
+    readonly admissionStatus: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal';
 }
 export interface AutomationRunView extends AutomationRun {
     readonly sessionArchived: boolean;
@@ -138,6 +146,7 @@ export declare class AutomationService {
     private commandErrorCode;
     markRead(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
     cancelRun(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
+    reviewRun(scope: AutomationScope, runId: string, action: 'accept' | 'keep' | 'discard', signal?: AbortSignal): Promise<AutomationRun>;
     private resolveScope;
     private ownedDefinition;
     private validateModelPolicy;
@@ -145,8 +154,12 @@ export declare class AutomationService {
     private llmRuntime;
     private modelCatalog;
     private preflightTarget;
+    /** Derive scheduler health from the existing Definition and Run facts. */
+    private deriveAutomationHealth;
     /** Import the old plugin's v1 domain without ever mutating or deleting it. */
     private importLegacyData;
+    /** A committed or ambiguous delete wins over the immutable legacy source. */
+    private hasLegacyDeleteTombstone;
     private requestPump;
     private pumpOnce;
     private claimLatestDue;
@@ -154,6 +167,8 @@ export declare class AutomationService {
     private startRun;
     private executeRun;
     private newLease;
+    /** Persist one monotonic lifecycle revision, then publish a catch-up-safe event. */
+    private commitRun;
     private persistRunPhase;
     private refreshRunLease;
     private armNextTimer;

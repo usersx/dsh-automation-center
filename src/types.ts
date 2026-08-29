@@ -1,6 +1,11 @@
 export type AutomationStatus = 'active' | 'paused'
 export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled' | 'interrupted'
 export type AutomationRunPhase = 'claim' | 'setup' | 'executing' | 'settling' | 'delivery'
+export type AutomationOutcome =
+  | 'pending' | 'unknown' | 'no_change' | 'changes_ready' | 'needs_input' | 'succeeded'
+  | 'failed' | 'blocked' | 'cancelled' | 'interrupted' | 'skipped' | 'partial'
+export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown'
+export type AutomationLifecycleKind = 'admitted' | 'phase' | 'terminal' | 'attention' | 'reconciled'
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU'
 
 export interface OnceSchedule {
@@ -31,6 +36,7 @@ export interface WeeklySchedule {
 
 export type AutomationSchedule = OnceSchedule | IntervalSchedule | DailySchedule | WeeklySchedule
 export type PermissionPreset = 'read-only' | 'workspace-write'
+export type ReviewMode = 'direct' | 'worktree'
 
 export interface InheritModelPolicy {
   readonly mode: 'inherit'
@@ -88,6 +94,7 @@ export interface AutomationDefinition {
   readonly provider: string | null
   readonly model: string | null
   readonly permissionPreset: PermissionPreset
+  readonly reviewMode: ReviewMode
   readonly runTimeoutMinutes: number
   readonly createdBy: AutomationCreator
   readonly createdAt: string
@@ -102,6 +109,7 @@ export interface AutomationTargetSnapshot {
   readonly provider: string | null
   readonly model: string | null
   readonly permissionPreset: PermissionPreset
+  readonly reviewMode: ReviewMode
   readonly runTimeoutMinutes: number
 }
 
@@ -118,6 +126,30 @@ export interface AutomationRunLease {
   readonly sideEffectsPossible: boolean
 }
 
+export interface AutomationEffectiveContext {
+  readonly actor: {
+    readonly kind: 'automation'
+    readonly sourceKind: 'agent' | 'web'
+    readonly sourceId: string
+  }
+  readonly permissionPreset: PermissionPreset
+  readonly agentPreset: string
+  readonly tools: readonly string[]
+  readonly approvalPolicy: 'never'
+  readonly backgroundProcesses: false
+  readonly capturedAt: string
+}
+
+export interface AutomationReviewState {
+  readonly mode: 'worktree'
+  readonly status: 'ready' | 'kept' | 'accepted' | 'discarded' | 'failed'
+  readonly baseSha: string
+  readonly worktreePath: string
+  readonly patchSha256: string | null
+  readonly diffStat: string | null
+  readonly error?: { readonly code: string; readonly message: string } | undefined
+}
+
 export interface AutomationRun {
   readonly version: 1
   readonly id: string
@@ -126,6 +158,12 @@ export interface AutomationRun {
   readonly occurrenceKey: string
   readonly trigger: 'schedule' | 'manual'
   readonly scheduledFor: string
+  /** Durable admission time, distinct from the planned occurrence. */
+  readonly admittedAt: string
+  /** One-based execution attempt for this durable occurrence. */
+  readonly attempt: number
+  /** Monotonic lifecycle revision used by event consumers and snapshot catch-up. */
+  readonly sequence: number
   readonly status: AutomationRunStatus
   readonly phase: AutomationRunPhase | null
   readonly lease: AutomationRunLease | null
@@ -136,8 +174,32 @@ export interface AutomationRun {
   readonly finishedAt: string | null
   readonly summary: string | null
   readonly error: AutomationRunError | null
+  readonly outcome: AutomationOutcome
+  readonly attention: AutomationAttention
+  readonly effect: {
+    readonly status: 'none' | 'possible' | 'completed' | 'unknown'
+    readonly updatedAt: string
+    readonly externalId?: string | undefined
+  }
   readonly unread: boolean
   readonly effectiveModel: AutomationModelSelection | null
+  readonly effectiveContext: AutomationEffectiveContext | null
+  readonly review: AutomationReviewState | null
+}
+
+export interface AutomationLifecycleEvent {
+  readonly kind: AutomationLifecycleKind
+  readonly runId: string
+  readonly automationId: string
+  readonly definitionRevision: number
+  readonly sequence: number
+  readonly at: string
+  readonly workspaceId: string
+  readonly status: AutomationRunStatus
+  readonly phase: AutomationRunPhase | null
+  readonly outcome: AutomationOutcome
+  readonly attention: AutomationAttention
+  readonly sessionId: string | null
 }
 
 export interface CreateAutomationInput {
@@ -152,6 +214,7 @@ export interface CreateAutomationInput {
   readonly provider?: string | null
   readonly model?: string | null
   readonly permissionPreset?: PermissionPreset
+  readonly reviewMode?: ReviewMode
   readonly runTimeoutMinutes?: number
   readonly createdBy: AutomationCreator
   readonly now: string
@@ -167,6 +230,7 @@ export interface UpdateAutomationInput {
   readonly provider?: string | null
   readonly model?: string | null
   readonly permissionPreset?: PermissionPreset
+  readonly reviewMode?: ReviewMode
   readonly runTimeoutMinutes?: number
   readonly now: string
 }
@@ -185,6 +249,9 @@ export type AutomationCommandName =
   | 'run-now'
   | 'cancel-run'
   | 'mark-read'
+  | 'review-accept'
+  | 'review-keep'
+  | 'review-discard'
 
 export interface AutomationCommandReceipt {
   readonly requestId: string

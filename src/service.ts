@@ -16,7 +16,7 @@ import {
   deleteDefinition,
   updateDefinition,
 } from './domain.ts'
-import { executeAutomationRun } from './executor.ts'
+import { executeAutomationRun, unattendedToolNames } from './executor.ts'
 import {
   legacyAutomationDomainSpec,
   type LegacyDefinition,
@@ -24,8 +24,11 @@ import {
   type LegacyRun,
 } from './legacy.ts'
 import { latestDueOccurrence, nextOccurrence } from './recurrence.ts'
+import { acceptGitReview, collectGitReview, discardGitReview, keepGitReview, prepareGitReview } from './review.ts'
 import type {
   AutomationDefinition,
+  AutomationLifecycleEvent,
+  AutomationLifecycleKind,
   AutomationCommandReceipt,
   AutomationCommandName,
   AutomationModelSelection,
@@ -34,6 +37,7 @@ import type {
   AutomationRunPhase,
   AutomationSchedule,
   PermissionPreset,
+  ReviewMode,
   StoredAutomationCommandReceipt,
   UpdateAutomationInput,
 } from './types.ts'
@@ -59,6 +63,7 @@ export interface CreateRequest {
   readonly permissionPreset?: PermissionPreset
   readonly agentPreset?: string
   readonly modelPolicy?: ModelPolicy
+  readonly reviewMode?: ReviewMode
   readonly runTimeoutMinutes?: number
 }
 
@@ -71,7 +76,11 @@ export type AutomationCommand =
   | { readonly kind: 'create'; readonly requestId: string; readonly input: CreateRequest }
   | { readonly kind: 'update'; readonly requestId: string; readonly automationId: string; readonly input: UpdateRequest }
   | { readonly kind: 'pause' | 'resume' | 'delete' | 'run-now'; readonly requestId: string; readonly automationId: string }
-  | { readonly kind: 'cancel-run' | 'mark-read'; readonly requestId: string; readonly runId: string }
+  | {
+      readonly kind: 'cancel-run' | 'mark-read' | 'review-accept' | 'review-keep' | 'review-discard'
+      readonly requestId: string
+      readonly runId: string
+    }
 
 export type AutomationScope =
   | { readonly sessionId: string; readonly creatorKind: 'agent' }
@@ -102,6 +111,19 @@ export interface AutomationModelOption extends AutomationModelSelection {
 }
 
 export interface AutomationHealth {
+  readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled'
+  readonly issues: readonly { readonly code: string; readonly message: string }[]
+  readonly effectiveModel: AutomationModelSelection | null
+  readonly expectedAt: string | null
+  readonly admittedAt: string | null
+  readonly claimedAt: string | null
+  readonly lastProgressAt: string | null
+  readonly overdueByMs: number
+  readonly queueWaitMs: number | null
+  readonly admissionStatus: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal'
+}
+
+interface TargetHealth {
   readonly status: 'ready' | 'blocked'
   readonly issues: readonly { readonly code: string; readonly message: string }[]
   readonly effectiveModel: AutomationModelSelection | null
@@ -152,6 +174,10 @@ export class AutomationService {
     detectedRuns: 0,
     importedDefinitions: 0,
     importedRuns: 0,
+    plannedDefinitions: 0,
+    plannedRuns: 0,
+    skippedDeletedDefinitions: 0,
+    sourceFingerprint: createHash('sha256').update('[]').digest('hex'),
   }
 
   private constructor(
@@ -249,7 +275,7 @@ export class AutomationService {
       }))
       const defaultModel = this.defaultModelSelection()
       const models = await this.modelCatalog(signal)
-      const health = new Map(await Promise.all(definitions.map(async definition => (
+      const targetHealth = new Map(await Promise.all(definitions.map(async definition => (
         [definition.id, await this.preflightTarget(definition, signal)] as const
       ))))
       return {
@@ -263,9 +289,14 @@ export class AutomationService {
           ...definition,
           nextRunAt: definition.status === 'active' ? nextOccurrence(definition.schedule, generatedAt) : null,
           lastRun: workspaceRuns.find(run => run.automationId === definition.id) ?? null,
-          health: health.get(definition.id) ?? {
+          health: this.deriveAutomationHealth(
+            definition,
+            workspaceRuns.filter(run => run.automationId === definition.id),
+            targetHealth.get(definition.id) ?? {
             status: 'blocked', issues: [{ code: 'preflight_unavailable', message: 'Preflight did not complete.' }], effectiveModel: null,
-          },
+            },
+            generatedAt,
+          ),
         })),
         runs,
         migration: this.migration,
@@ -305,6 +336,7 @@ export class AutomationService {
         agentPreset,
         modelPolicy,
         permissionPreset: request.permissionPreset ?? 'read-only',
+        reviewMode: request.reviewMode ?? 'direct',
         runTimeoutMinutes: request.runTimeoutMinutes ?? Math.max(1, Math.round(this.config.runTimeoutMs / 60_000)),
         createdBy: {
           kind: scope.creatorKind,
@@ -375,8 +407,7 @@ export class AutomationService {
         && (candidate.status === 'queued' || candidate.status === 'running')
       ))
       if (alreadyActive) throw new Error('The automation already has a queued or running run.')
-      await this.runs.put(value.id, value)
-      return value
+      return this.commitRun(value, 'admitted')
     }, signal)
     this.requestPump()
     return run
@@ -413,6 +444,10 @@ export class AutomationService {
         return { ...stored, replayed: true }
       }
 
+      // Preserve the durable target before the mutation. A Host stop after a
+      // legacy Definition delete but before the final Receipt must still keep
+      // the source record tombstoned on the next open.
+      let entityId = command.kind === 'delete' ? command.automationId : undefined
       // Reserve the id before applying the mutation. If the Host stops after
       // the write but before the final receipt, a replay returns `unknown`
       // and reconciles from storage instead of applying the command twice.
@@ -420,6 +455,7 @@ export class AutomationService {
         requestId,
         command: command.kind,
         outcome: 'unknown',
+        ...(entityId === undefined ? {} : { entityId }),
         appliedAt: toIso(),
         error: {
           code: 'result_unknown',
@@ -430,7 +466,6 @@ export class AutomationService {
       }
       await this.receipts.put(receiptKey, provisional)
 
-      let entityId: string | undefined
       let revision: number | undefined
       let outcome: AutomationCommandReceipt['outcome'] = 'committed'
       let error: AutomationCommandReceipt['error']
@@ -501,6 +536,12 @@ export class AutomationService {
         const value = await this.markRead(scope, command.runId, signal)
         return { entityId: value.id }
       }
+      case 'review-accept':
+      case 'review-keep':
+      case 'review-discard': {
+        const value = await this.reviewRun(scope, command.runId, command.kind.slice('review-'.length) as 'accept' | 'keep' | 'discard', signal)
+        return { entityId: value.id }
+      }
     }
   }
 
@@ -532,8 +573,7 @@ export class AutomationService {
       throwIfCancelled(signal)
       if (!run.unread) return run
       const next = { ...run, unread: false }
-      await this.runs.put(runId, next)
-      return next
+      return this.commitRun(next, 'attention')
     }, signal)
   }
 
@@ -560,10 +600,45 @@ export class AutomationService {
         status: 'cancelled',
         finishedAt: toIso(),
         error: { code: 'cancelled', message: 'The automation was cancelled before it started.' },
-        unread: true,
+        outcome: 'cancelled',
+        attention: 'none',
+        unread: false,
       }
-      await this.runs.put(runId, cancelled)
-      return cancelled
+      return this.commitRun(cancelled, 'terminal')
+    }, signal)
+  }
+
+  async reviewRun(
+    scope: AutomationScope,
+    runId: string,
+    action: 'accept' | 'keep' | 'discard',
+    signal?: AbortSignal,
+  ): Promise<AutomationRun> {
+    return this.serialize(async () => {
+      const run = this.runs.get(runId)
+      if (run === undefined) throw new Error(`unknown automation run '${runId}'`)
+      if (!(scope.creatorKind === 'web' && scope.workspaceId === undefined)) {
+        const { workspace } = await this.resolveScope(scope)
+        if (run.targetSnapshot.workspaceId !== workspace.id) {
+          throw new Error('The automation run belongs to another workspace.')
+        }
+      }
+      throwIfCancelled(signal)
+      if (run.review === null || (run.review.status !== 'ready' && run.review.status !== 'kept')) {
+        throw new Error('The automation run has no pending Git review.')
+      }
+      const review = action === 'accept'
+        ? await acceptGitReview(run.targetSnapshot.cwd, run.review)
+        : action === 'discard'
+          ? await discardGitReview(run.targetSnapshot.cwd, run.review)
+          : keepGitReview(run.review)
+      const pending = review.status === 'kept'
+      return this.commitRun({
+        ...run,
+        review,
+        attention: pending ? 'review' : 'none',
+        unread: pending,
+      }, 'attention')
     }, signal)
   }
 
@@ -683,7 +758,7 @@ export class AutomationService {
   private async preflightTarget(
     target: Pick<AutomationDefinition, 'workspaceId' | 'cwd' | 'agentPreset' | 'modelPolicy'>,
     signal?: AbortSignal,
-  ): Promise<AutomationHealth> {
+  ): Promise<TargetHealth> {
     const issues: Array<{ readonly code: string; readonly message: string }> = []
     const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(target.workspaceId))
     if (workspace === undefined) {
@@ -733,20 +808,120 @@ export class AutomationService {
     return { status: issues.length === 0 ? 'ready' : 'blocked', issues, effectiveModel }
   }
 
+  /** Derive scheduler health from the existing Definition and Run facts. */
+  private deriveAutomationHealth(
+    definition: AutomationDefinition,
+    relatedRuns: readonly AutomationRun[],
+    target: TargetHealth,
+    now: string,
+  ): AutomationHealth {
+    const expectedCandidate = definition.status === 'active'
+      ? latestDueOccurrence(definition.schedule, now)
+      : null
+    const expectedAt = expectedCandidate !== null
+      && Date.parse(expectedCandidate) > Date.parse(definition.updatedAt)
+      ? expectedCandidate
+      : null
+    const expectedRun = expectedAt === null ? undefined : relatedRuns.find(run => (
+      run.trigger === 'schedule' && run.scheduledFor === expectedAt
+    ))
+    const latestRun = [...relatedRuns].sort(compareRuns)[0]
+    const progressRun = expectedRun ?? latestRun
+    const lastProgressAt = progressRun === undefined
+      ? null
+      : progressRun.finishedAt
+        ?? progressRun.lease?.heartbeatAt
+        ?? progressRun.startedAt
+        ?? progressRun.admittedAt
+    const admissionStatus: AutomationHealth['admissionStatus'] = expectedAt === null
+      ? 'not_due'
+      : expectedRun === undefined
+        ? 'not_admitted'
+        : expectedRun.status === 'queued'
+          ? 'queued'
+          : expectedRun.status === 'running'
+            ? 'running'
+            : 'terminal'
+    const overdueThresholdMs = Math.max(60_000, Math.min(5 * 60_000, this.config.misfireGraceMs || 60_000))
+    const overdueByMs = expectedAt === null || expectedRun !== undefined
+      ? 0
+      : Math.max(0, Date.parse(now) - Date.parse(expectedAt))
+    const staleByMs = progressRun?.status === 'running' && lastProgressAt !== null
+      ? Math.max(0, Date.parse(now) - Date.parse(lastProgressAt))
+      : 0
+    const queueWaitMs = progressRun === undefined
+      ? null
+      : Math.max(0, Date.parse(progressRun.startedAt ?? now) - Date.parse(progressRun.admittedAt))
+    if (target.status === 'blocked') {
+      return {
+        ...target, expectedAt, admittedAt: expectedRun?.admittedAt ?? null,
+        claimedAt: expectedRun?.startedAt ?? null, lastProgressAt, overdueByMs, queueWaitMs, admissionStatus,
+      }
+    }
+    if (overdueByMs > overdueThresholdMs) {
+      return {
+        ...target,
+        status: 'overdue',
+        issues: [{
+          code: 'occurrence_overdue',
+          message: `The occurrence expected at ${expectedAt} has not been admitted.`,
+        }],
+        expectedAt, admittedAt: null, claimedAt: null, lastProgressAt,
+        overdueByMs, queueWaitMs: null, admissionStatus,
+      }
+    }
+    if (progressRun?.status === 'queued' && queueWaitMs !== null && queueWaitMs > overdueThresholdMs) {
+      return {
+        ...target,
+        status: 'stalled',
+        issues: [{
+          code: 'queue_stalled',
+          message: `The admitted run has waited ${Math.round(queueWaitMs / 1_000)} seconds without being claimed.`,
+        }],
+        expectedAt, admittedAt: progressRun.admittedAt, claimedAt: null,
+        lastProgressAt, overdueByMs: queueWaitMs, queueWaitMs, admissionStatus,
+      }
+    }
+    if (progressRun?.status === 'running' && staleByMs > RUN_LEASE_MS) {
+      return {
+        ...target,
+        status: 'stalled',
+        issues: [{
+          code: 'run_stalled',
+          message: `The run has made no durable progress since ${lastProgressAt}.`,
+        }],
+        expectedAt, admittedAt: progressRun.admittedAt, claimedAt: progressRun.startedAt,
+        lastProgressAt, overdueByMs: staleByMs, queueWaitMs, admissionStatus,
+      }
+    }
+    return {
+      ...target, expectedAt, admittedAt: expectedRun?.admittedAt ?? null,
+      claimedAt: expectedRun?.startedAt ?? null, lastProgressAt,
+      overdueByMs: 0, queueWaitMs, admissionStatus,
+    }
+  }
+
   /** Import the old plugin's v1 domain without ever mutating or deleting it. */
   private async importLegacyData(): Promise<LegacyMigrationSummary> {
     const legacy = await this.ctx.storageDomain.open(legacyAutomationDomainSpec)
     try {
       const oldDefinitions = legacy.table('definitions') as KvTable<string, LegacyDefinition>
       const oldRuns = legacy.table('runs') as KvTable<string, LegacyRun>
-      let importedDefinitions = 0
-      let importedRuns = 0
+      const definitionsToImport: Array<readonly [string, AutomationDefinition]> = []
+      const runsToImport: Array<readonly [string, AutomationRun]> = []
+      let skippedDeletedDefinitions = 0
       const defaultTimeout = Math.max(1, Math.round(this.config.runTimeoutMs / 60_000))
       for (const [id, old] of oldDefinitions.entries()) {
+        if (this.hasLegacyDeleteTombstone(id)) {
+          skippedDeletedDefinitions += 1
+          continue
+        }
         const modelPolicy = old.provider !== null && old.model !== null
           ? { mode: 'pinned' as const, provider: old.provider, model: old.model }
           : { mode: 'inherit' as const }
-        const converted: AutomationDefinition = { ...old, modelPolicy, runTimeoutMinutes: defaultTimeout }
+        const converted: AutomationDefinition = {
+          ...old, modelPolicy, reviewMode: 'direct', runTimeoutMinutes: defaultTimeout,
+        }
         const existing = this.definitions.get(id)
         if (existing !== undefined) {
           if (JSON.stringify(existing) !== JSON.stringify(converted)) {
@@ -754,8 +929,7 @@ export class AutomationService {
           }
           continue
         }
-        await this.definitions.put(id, converted)
-        importedDefinitions += 1
+        definitionsToImport.push([id, converted])
       }
       for (const [id, old] of oldRuns.entries()) {
         const modelPolicy = old.targetSnapshot.provider !== null && old.targetSnapshot.model !== null
@@ -763,7 +937,32 @@ export class AutomationService {
           : { mode: 'inherit' as const }
         const converted: AutomationRun = {
           ...old,
-          targetSnapshot: { ...old.targetSnapshot, modelPolicy, runTimeoutMinutes: defaultTimeout },
+          admittedAt: old.scheduledFor,
+          attempt: 1,
+          sequence: 0,
+          outcome: old.status === 'queued' || old.status === 'running'
+            ? 'pending'
+            : old.status === 'succeeded'
+              ? 'succeeded'
+              : old.status === 'failed'
+                ? 'failed'
+                : old.status === 'cancelled'
+                  ? 'cancelled'
+                  : 'skipped',
+          attention: old.status === 'failed'
+            ? 'failed'
+            : old.status === 'skipped'
+              ? 'review'
+              : 'none',
+          effect: {
+            status: 'none',
+            updatedAt: old.finishedAt ?? old.startedAt ?? old.scheduledFor,
+          },
+          effectiveContext: null,
+          review: null,
+          targetSnapshot: {
+            ...old.targetSnapshot, modelPolicy, reviewMode: 'direct', runTimeoutMinutes: defaultTimeout,
+          },
           phase: old.status === 'queued' ? 'claim' : old.status === 'running' ? 'executing' : null,
           lease: null,
           effectiveModel: null,
@@ -775,18 +974,38 @@ export class AutomationService {
           }
           continue
         }
-        await this.runs.put(id, converted)
-        importedRuns += 1
+        runsToImport.push([id, converted])
       }
+      // The loops above are a dry run: every conversion and conflict is
+      // validated before the first destination write.
+      for (const [id, converted] of definitionsToImport) await this.definitions.put(id, converted)
+      for (const [id, converted] of runsToImport) await this.runs.put(id, converted)
+      const sourceFingerprint = createHash('sha256').update(JSON.stringify({
+        definitions: [...oldDefinitions.keys()].sort(),
+        runs: [...oldRuns.keys()].sort(),
+      })).digest('hex')
       return {
         detectedDefinitions: oldDefinitions.size,
         detectedRuns: oldRuns.size,
-        importedDefinitions,
-        importedRuns,
+        importedDefinitions: definitionsToImport.length,
+        importedRuns: runsToImport.length,
+        plannedDefinitions: definitionsToImport.length,
+        plannedRuns: runsToImport.length,
+        skippedDeletedDefinitions,
+        sourceFingerprint,
       }
     } finally {
       await legacy.close()
     }
+  }
+
+  /** A committed or ambiguous delete wins over the immutable legacy source. */
+  private hasLegacyDeleteTombstone(automationId: string): boolean {
+    return [...this.receipts.entries()].some(([, receipt]) => (
+      receipt.command === 'delete'
+      && receipt.entityId === automationId
+      && (receipt.outcome === 'committed' || receipt.outcome === 'unknown')
+    ))
   }
 
   private requestPump(): void {
@@ -833,7 +1052,7 @@ export class AutomationService {
     const related = [...this.runs.entries()].map(([, run]) => run)
       .filter(run => run.automationId === definition.id)
     if (related.some(run => run.trigger === 'schedule' && run.scheduledFor === scheduledFor)) return
-    const candidate = createScheduledRun(definition, scheduledFor)
+    const candidate = { ...createScheduledRun(definition, scheduledFor), admittedAt: now }
     if (this.runs.get(candidate.id) !== undefined) return
     const overlapping = related.some(run => run.status === 'queued' || run.status === 'running')
     const age = Date.parse(now) - Date.parse(scheduledFor)
@@ -841,16 +1060,18 @@ export class AutomationService {
       const reason = overlapping
         ? { code: 'overlap', message: 'Skipped because the previous run is still active.' }
         : { code: 'misfire', message: 'Skipped because the host resumed outside the catch-up window.' }
-      await this.runs.put(candidate.id, {
+      await this.commitRun({
         ...candidate,
         status: 'skipped',
         finishedAt: now,
         error: reason,
-      })
+        outcome: 'skipped',
+        attention: 'review',
+      }, 'terminal')
       await this.pruneWorkspaceHistory(candidate.targetSnapshot.workspaceId)
       return
     }
-    await this.runs.put(candidate.id, candidate)
+    await this.commitRun(candidate, 'admitted')
   }
 
   private async startQueuedRuns(): Promise<void> {
@@ -910,9 +1131,14 @@ export class AutomationService {
                 : cancelled
                   ? { code: 'cancelled', message: 'The automation was cancelled before it completed.' }
                   : { code: 'persistence_error', message: 'The run could not persist its execution state.' },
+              outcome: cancelled ? 'cancelled' : 'failed',
+              attention: current.effect.status === 'none' ? (cancelled ? 'review' : 'failed') : 'unknown',
+              effect: current.effect.status === 'none'
+                ? current.effect
+                : { ...current.effect, status: 'unknown', updatedAt: toIso() },
               unread: true,
             }
-            await this.runs.put(run.id, failed)
+            await this.commitRun(failed, 'terminal')
             await this.archiveRunSession(failed)
             await this.pruneWorkspaceHistory(current.targetSnapshot.workspaceId)
           }
@@ -932,12 +1158,14 @@ export class AutomationService {
   private async executeRun(run: AutomationRun, signal: AbortSignal): Promise<void> {
     const definition = this.definitions.get(run.automationId)
     if (definition === undefined) {
-      await this.runs.put(run.id, {
+      await this.commitRun({
         ...run,
         status: 'failed',
         finishedAt: toIso(),
         error: { code: 'definition_deleted', message: 'The automation was deleted before this run started.' },
-      })
+        outcome: 'failed',
+        attention: 'failed',
+      }, 'terminal')
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
       return
     }
@@ -951,7 +1179,7 @@ export class AutomationService {
       const issue = health.issues[0] ?? {
         code: 'preflight_failed', message: 'The automation target failed preflight.',
       }
-      await this.runs.put(run.id, {
+      await this.commitRun({
         ...run,
         status: 'failed',
         phase: null,
@@ -959,8 +1187,10 @@ export class AutomationService {
         finishedAt: toIso(),
         effectiveModel: health.effectiveModel,
         error: issue,
+        outcome: 'blocked',
+        attention: 'blocked',
         unread: true,
-      })
+      }, 'terminal')
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
       return
     }
@@ -976,12 +1206,44 @@ export class AutomationService {
       lease: this.newLease(startedAt, false),
       startedAt,
       sessionId,
+      effectiveContext: {
+        actor: {
+          kind: 'automation',
+          sourceKind: definition.createdBy.kind,
+          sourceId: definition.createdBy.sessionId,
+        },
+        permissionPreset: run.targetSnapshot.permissionPreset,
+        agentPreset: run.targetSnapshot.agentPreset,
+        tools: unattendedToolNames(),
+        approvalPolicy: 'never',
+        backgroundProcesses: false,
+        capturedAt: startedAt,
+      },
     }
-    await this.runs.put(run.id, running)
+    let executingRun = await this.commitRun(running, 'phase')
+    let executionCwd: string | undefined
+    if (run.targetSnapshot.reviewMode === 'worktree') {
+      try {
+        const review = await prepareGitReview(run.targetSnapshot.cwd)
+        executingRun = await this.commitRun({ ...executingRun, review }, 'phase')
+        executionCwd = review.worktreePath
+      } catch (error: unknown) {
+        const finishedAt = toIso()
+        await this.commitRun({
+          ...executingRun,
+          status: 'failed', phase: null, lease: null, finishedAt,
+          error: { code: 'review_setup_failed', message: asMessage(error) },
+          outcome: 'blocked', attention: 'blocked', unread: true,
+        }, 'terminal')
+        await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
+        return
+      }
+    }
     const completion = await executeAutomationRun(this.ctx, definition, run, {
       runTimeoutMs: run.targetSnapshot.runTimeoutMinutes * 60_000,
       sessionId,
       signal,
+      ...(executionCwd === undefined ? {} : { executionCwd }),
       onPhase: async (phase, sideEffectsPossible) => {
         await this.persistRunPhase(run.id, phase, sideEffectsPossible)
       },
@@ -991,11 +1253,47 @@ export class AutomationService {
     const timedOut = signal.aborted === true
       && typeof abortReason === 'object' && abortReason !== null && 'code' in abortReason
       && String((abortReason as { readonly code: unknown }).code) === 'run_timeout'
-    const delivering = this.runs.get(run.id) ?? running
+    const delivering = this.runs.get(run.id) ?? executingRun
     const finishedAt = toIso()
+    let review = delivering.review
+    let reviewFailure: { readonly code: string; readonly message: string } | undefined
+    if (review !== null && (review.status === 'ready' || review.status === 'kept')) {
+      try {
+        review = await collectGitReview(review)
+      } catch (error: unknown) {
+        reviewFailure = { code: 'review_collect_failed', message: asMessage(error) }
+        review = { ...review, status: 'failed', error: reviewFailure }
+      }
+    }
+    const reviewHasChanges = review?.status === 'ready' && review.diffStat !== 'No changes'
+    const terminalOutcome = reviewFailure !== undefined
+      ? 'failed'
+      : reviewHasChanges
+        ? 'changes_ready'
+        : timedOut
+      ? 'failed'
+      : completion.outcome
+        ?? (completion.status === 'cancelled' ? 'cancelled' : completion.status === 'failed' ? 'failed' : 'unknown')
+    const terminalAttention = reviewFailure !== undefined
+      ? 'failed'
+      : reviewHasChanges
+        ? 'review'
+        : completion.cleanupIncomplete === true
+      ? 'unknown'
+      : timedOut
+      ? (delivering.effect.status === 'none' ? 'failed' : 'unknown')
+      : completion.attention
+        ?? (completion.status === 'cancelled'
+          ? (delivering.effect.status === 'none' ? 'review' : 'unknown')
+          : completion.status === 'failed'
+            ? (delivering.effect.status === 'none' ? 'failed' : 'unknown')
+            : 'unknown')
+    const terminalStatus = completion.status === 'succeeded' && terminalOutcome === 'blocked'
+      ? 'failed'
+      : timedOut ? 'failed' : completion.status
     const completed: AutomationRun = {
       ...delivering,
-      status: timedOut ? 'failed' : completion.status,
+      status: terminalStatus,
       phase: null,
       lease: null,
       sessionId: completion.sessionId ?? null,
@@ -1003,11 +1301,28 @@ export class AutomationService {
       summary: completion.summary ?? null,
       error: timedOut
         ? { code: 'run_timeout', message: 'The automation exceeded its whole-job time limit.' }
-        : completion.error ?? null,
-      unread: true,
+        : terminalOutcome === 'blocked'
+          ? { code: 'task_blocked', message: 'The automation reported that it could not proceed.' }
+          : reviewFailure ?? completion.error ?? null,
+      outcome: terminalOutcome,
+      attention: terminalAttention,
+      effect: completion.cleanupIncomplete !== true && delivering.effect.status === 'none'
+        ? delivering.effect
+        : {
+            ...delivering.effect,
+            status: completion.cleanupIncomplete === true || timedOut || completion.status !== 'succeeded'
+              ? 'unknown'
+              : 'completed',
+            updatedAt: finishedAt,
+          },
+      unread: terminalAttention !== 'none',
       effectiveModel: completion.effectiveModel ?? null,
+      effectiveContext: delivering.effectiveContext === null || completion.effectiveTools === undefined
+        ? delivering.effectiveContext
+        : { ...delivering.effectiveContext, tools: completion.effectiveTools },
+      review,
     }
-    await this.runs.put(run.id, completed)
+    await this.commitRun(completed, 'terminal')
     await this.archiveRunSession(completed)
     await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
   }
@@ -1022,6 +1337,36 @@ export class AutomationService {
     }
   }
 
+  /** Persist one monotonic lifecycle revision, then publish a catch-up-safe event. */
+  private async commitRun(run: AutomationRun, kind: AutomationLifecycleKind): Promise<AutomationRun> {
+    const current = this.runs.get(run.id)
+    const stored: AutomationRun = {
+      ...run,
+      sequence: Math.max(run.sequence, current?.sequence ?? -1) + 1,
+    }
+    await this.runs.put(stored.id, stored)
+    const event: AutomationLifecycleEvent = {
+      kind,
+      runId: stored.id,
+      automationId: stored.automationId,
+      definitionRevision: stored.definitionRevision,
+      sequence: stored.sequence,
+      at: stored.finishedAt ?? stored.lease?.heartbeatAt ?? stored.startedAt ?? stored.admittedAt,
+      workspaceId: stored.targetSnapshot.workspaceId,
+      status: stored.status,
+      phase: stored.phase,
+      outcome: stored.outcome,
+      attention: stored.attention,
+      sessionId: stored.sessionId,
+    }
+    try {
+      this.ctx.emit?.('automation/lifecycle', event)
+    } catch (error: unknown) {
+      this.ctx.logger.warn(`dsh-automation: lifecycle consumer failed for run '${stored.id}': ${asMessage(error)}`)
+    }
+    return stored
+  }
+
   private async persistRunPhase(
     runId: string,
     phase: AutomationRunPhase,
@@ -1030,7 +1375,7 @@ export class AutomationService {
     const current = this.runs.get(runId)
     if (current === undefined || current.status !== 'running') return
     const now = toIso()
-    await this.runs.put(runId, {
+    await this.commitRun({
       ...current,
       phase,
       lease: current.lease === null
@@ -1041,7 +1386,10 @@ export class AutomationService {
             expiresAt: toIso(Date.parse(now) + RUN_LEASE_MS),
             sideEffectsPossible: current.lease.sideEffectsPossible || sideEffectsPossible,
           },
-    })
+      effect: sideEffectsPossible
+        ? { ...current.effect, status: 'possible', updatedAt: now }
+        : current.effect,
+    }, 'phase')
   }
 
   private async refreshRunLease(runId: string): Promise<void> {
@@ -1109,12 +1457,14 @@ export class AutomationService {
       if (run.status !== 'running') continue
       const safeToRetry = run.sessionId === null && run.lease?.sideEffectsPossible !== true
       if (safeToRetry) {
-        await this.runs.put(id, {
+        await this.commitRun({
           ...run, status: 'queued', phase: 'claim', lease: null, startedAt: null, error: null,
-        })
+          attempt: run.attempt + 1, outcome: 'pending', attention: 'none',
+          effect: { status: 'none', updatedAt: finishedAt },
+        }, 'reconciled')
         continue
       }
-      await this.runs.put(id, {
+      await this.commitRun({
         ...run,
         status: 'interrupted',
         phase: null,
@@ -1124,8 +1474,13 @@ export class AutomationService {
           code: 'host_interrupted',
           message: 'The DSH Host stopped after this run may have produced side effects; it was not retried.',
         },
+        outcome: 'interrupted',
+        attention: 'unknown',
+        effect: run.effect.status === 'none' && run.lease?.sideEffectsPossible !== true
+          ? run.effect
+          : { ...run.effect, status: 'unknown', updatedAt: finishedAt },
         unread: true,
-      })
+      }, 'reconciled')
     }
   }
 

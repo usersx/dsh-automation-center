@@ -114,4 +114,14 @@ test('strict validation rejects blank prompts and unsafe permission presets', ()
   assert.equal(automationDefinitionSchema.safeParse({
     ...definition(), permissionPreset: 'danger-full-access',
   }).success, false)
+  assert.throws(() => createDefinition({
+    ...definition(), id: 'worktree-read-only', reviewMode: 'worktree',
+    permissionPreset: 'read-only', now: '2026-08-13T00:00:00Z',
+  }), /worktree review requires workspace-write/)
+  const reviewed = createDefinition({
+    ...definition(), id: 'worktree-write', reviewMode: 'worktree',
+    permissionPreset: 'workspace-write', now: '2026-08-13T00:00:00Z',
+  })
+  assert.equal(reviewed.reviewMode, 'worktree')
+  assert.equal(createManualRun(reviewed, '2026-08-13T01:00:00Z').targetSnapshot.reviewMode, 'worktree')
 })

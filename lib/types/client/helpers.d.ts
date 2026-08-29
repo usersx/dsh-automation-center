@@ -12,6 +12,7 @@ export interface AutomationFormState {
     readonly weekdays: readonly number[];
     readonly timeZone: string;
     readonly permission: CreateAutomationInput['permission'];
+    readonly reviewMode: CreateAutomationInput['reviewMode'];
     readonly workspaceId: string;
     readonly agentPreset: string;
     readonly modelMode: 'inherit' | 'pinned';
@@ -20,7 +21,7 @@ export interface AutomationFormState {
     readonly reasoningEffort: string;
     readonly runTimeoutMinutes: string;
 }
-export type FormErrorKey = 'form.error.name' | 'form.error.prompt' | 'form.error.once' | 'form.error.interval' | 'form.error.weekdays' | 'form.error.workspace' | 'form.error.preset' | 'form.error.model' | 'form.error.timeout';
+export type FormErrorKey = 'form.error.name' | 'form.error.prompt' | 'form.error.once' | 'form.error.interval' | 'form.error.weekdays' | 'form.error.workspace' | 'form.error.preset' | 'form.error.model' | 'form.error.timeout' | 'form.error.review';
 export declare class AutomationFormError extends Error {
     readonly key: FormErrorKey;
     constructor(key: FormErrorKey);

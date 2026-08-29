@@ -8,7 +8,7 @@ Automation Center 是 DSH 的全局一级页面。Automation 是持久化任务�
 
 ### 原版兼容 Surface
 
-未修改的 DSH `0.1.0-rc.8` 至当前 `0.1.1-rc.2` 已公开全局 `settings.section` 和 Session 作用域的 `conversation.view`。插件始终注册 Settings 管理页，并在两个 Shell Slot 不可用时保留 Session 快捷入口：
+未修改的 DSH `0.1.0-rc.8` 至当前 `0.1.2-alpha.1` 已公开全局 `settings.section` 和 Session 作用域的 `conversation.view`。插件始终注册 Settings 管理页，并在两个 Shell Slot 不可用时保留 Session 快捷入口：
 
 ```text
 settings.section / automation  -> Automation Center（权威全局入口）
@@ -60,7 +60,7 @@ interface AutomationEngine {
 }
 ```
 
-Scheduler、Loopback RPC、Agent Tools 和 Client UI 都复用 `snapshot` / `dispatch` 主边界，不直接读写 Storage Domain。每个写命令带稳定 request ID，返回持久 Receipt：`committed`、`rejected` 或 `unknown`；Client 在 Receipt 后执行 read-after-write，以 Definition Store 的 revision 为唯一权威。
+Scheduler、受认证 RPC、Agent Tools 和 Client UI 都复用 `snapshot` / `dispatch` 主边界，不直接读写 Storage Domain。每个写命令带稳定 request ID，返回持久 Receipt：`committed`、`rejected` 或 `unknown`；Client 在 Receipt 后执行 read-after-write，以 Definition Store 的 revision 为唯一权威。
 
 ## 执行模型
 
@@ -79,7 +79,7 @@ Scheduler、Loopback RPC、Agent Tools 和 Client UI 都复用 `snapshot` / `dis
 
 ## 权限边界
 
-- Web 管理 RPC 仅允许可信 Loopback 连接。
+- Web 管理 RPC 在 rc.8/rc.2 使用 Loopback authority，在 alpha.1 使用一次性 Token 认证通道；所有 mutation 仍执行 Workspace/Profile scope 校验。
 - UI 只能选择 DSH 已注册的 Workspace ID，不能传入任意宿主路径。
 - Agent Tools 只能管理调用 Session 所属 Workspace 的 Automation。
 - Automation 创建的 Agent 不获得自动化管理工具，防止递归创建无人值守任务。
@@ -94,4 +94,4 @@ Scheduler、Loopback RPC、Agent Tools 和 Client UI 都复用 `snapshot` / `dis
 
 ## 发布边界
 
-当前插件提供可安装的 Host/Web Bundle，并能在未经修改的 DSH `0.1.0-rc.8` 与 `0.1.1-rc.2` 上使用 Settings 全局管理页和 Conversation 快捷入口。`0.1.1-rc.2` 仍未提供 `sidebar.primary.action` 与 `shell.page`；Shell Patch/未来上游 Slot 只决定是否能展示 Sidebar 根入口，不再是安装前置条件。Release 必须分别声明 Stock Compatible 与 Global Center 的验收结果，不能把 Settings 页面描述成 Sidebar 根入口。只有 [验收标准](acceptance-criteria.zh-CN.md) 中对应发布声明的 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。
+当前插件提供可安装的 Host/Web Bundle，并能在未经修改的 DSH `0.1.0-rc.8`、`0.1.1-rc.2` 与 `0.1.2-alpha.1` 上使用 Settings 全局管理页和 Conversation 快捷入口。`0.1.2-alpha.1` 仍未提供 `sidebar.primary.action` 与 `shell.page`；Shell Patch/未来上游 Slot 只决定是否能展示 Sidebar 根入口，不再是安装前置条件。Release 必须分别声明 Stock Compatible 与 Global Center 的验收结果，不能把 Settings 页面描述成 Sidebar 根入口。只有 [验收标准](acceptance-criteria.zh-CN.md) 中对应发布声明的 P0 条目在 Web 与 Desktop 均通过后，才可升级为稳定版。

@@ -42,7 +42,7 @@ test('package keeps the installable DSH bundle and Web client contract', async (
   assert.ok(manifest.files?.includes('lib/*.js'))
   assert.ok(manifest.files?.includes('lib/types'))
   assert.ok(manifest.files?.includes('cordis.patch.yml'))
-  assert.deepEqual(manifest.dependencies, undefined)
+  assert.deepEqual(manifest.dependencies, { '@deepseek-ai/schemastery': '3.18.1' })
   assert.equal(manifest.scripts?.prepare, undefined)
   assert.equal(manifest.peerDependencies?.react, '^18.2.0')
   assert.deepEqual(manifest.peerDependenciesMeta?.react, { optional: true })

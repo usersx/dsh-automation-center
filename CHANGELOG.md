@@ -4,6 +4,30 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-08-30
+
+### Added
+
+- Derived scheduler health with expected/admitted/claimed timestamps, queue wait, last durable progress, overdue and stalled states.
+- Machine-readable `Outcome` / `Attention`, bounded attempts, durable side-effect uncertainty, and a scoped `automation_report_outcome` tool.
+- Monotonic lifecycle events with run identity/revision/sequence plus a redacted effective actor, permission, preset and tool snapshot.
+- Isolated Git worktree review mode with clean-base enforcement and explicit accept, keep and discard actions.
+- Conditional local notifications when browser notification permission is already granted; the UI never prompts automatically.
+
+### Changed
+
+- Validate package installation against stock DSH `0.1.2-alpha.1` in addition to rc.8 and rc.2.
+- Restrict the model-visible tool catalog to the effective unattended allowlist instead of exposing tools that would later be denied.
+- Bound cancellation cleanup independently from the Agent turn deadline and classify incomplete cleanup as an uncertain effect.
+- Validate the complete legacy migration plan before the first destination write and expose a source fingerprint/count summary.
+
+### Fixed
+
+- Keep imported legacy definitions deleted across Host restarts by reusing durable delete Receipts as tombstones.
+- Declare `@deepseek-ai/schemastery` as an explicit runtime dependency so alpha.1 Profile composition can import the Host bundle.
+- Preserve actionable `REQUEST_EXTENSION` and `STREAM_CLOSED` classifications instead of folding them into a generic executor error.
+- Keep Result Session navigation, Workspace attachment and Attention readback scope-consistent.
+
 ### Changed
 
 - Validate stock compatibility against both the minimum supported DSH `0.1.0-rc.8` and the current `0.1.1-rc.2` in CI.
@@ -70,7 +94,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - First npm pre-release of the global Automation Center and fresh-session execution engine.
 
-[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.6...HEAD
+[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.7...HEAD
+[0.1.0-alpha.7]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.3...v0.1.0-alpha.4

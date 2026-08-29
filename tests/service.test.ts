@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
-import { createDefinition, createManualRun } from '../src/domain.ts'
+import { promisify } from 'node:util'
+import { createDefinition, createManualRun, createScheduledRun } from '../src/domain.ts'
 import { AutomationService, type AutomationConfig } from '../src/service.ts'
 import type { LegacyDefinition, LegacyRun } from '../src/legacy.ts'
-import type { AutomationDefinition, AutomationRun } from '../src/types.ts'
+import type { AutomationDefinition, AutomationLifecycleEvent, AutomationRun } from '../src/types.ts'
 
 class MemoryTable<Value> {
   readonly writes: Value[] = []
@@ -47,6 +52,7 @@ class MemoryDomain {
     this.definitions = new MemoryTable(new Map(definitions.map(value => [value.id, value])), writable)
     this.runs = new MemoryTable(new Map(runs.map(value => [value.id, value])), writable)
   }
+  reopen(): void { this.closed = false }
   table(name: 'definitions' | 'runs' | 'receipts'): MemoryTable<AutomationDefinition> | MemoryTable<AutomationRun> | MemoryTable<unknown> {
     return name === 'definitions' ? this.definitions : name === 'runs' ? this.runs : this.receipts
   }
@@ -61,6 +67,11 @@ const defaults: AutomationConfig = {
   misfireGraceMs: 15 * 60_000,
   historyLimit: 200,
   archiveRunSessions: false,
+}
+const execFileAsync = promisify(execFile)
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n')
 }
 
 function storedDefinition(now: string): AutomationDefinition {
@@ -89,29 +100,36 @@ async function harness(seed?: {
   readonly onResolveWorkspace?: () => void
   readonly legacyDefinitions?: readonly LegacyDefinition[]
   readonly legacyRuns?: readonly LegacyRun[]
+  readonly currentDomain?: MemoryDomain
+  readonly workspacePath?: string
+  readonly mutateExecutionCwd?: (cwd: string) => Promise<void>
 }): Promise<{
   service: AutomationService
   domain: MemoryDomain
   archivedSessionIds: string[]
+  attachedSessions: Array<{ workspaceId: string; sessionId: string }>
+  lifecycleEvents: AutomationLifecycleEvent[]
   warnings: string[]
   removeSourceAgent(): void
+  reopenService(): Promise<AutomationService>
 }> {
-  const domain = new MemoryDomain(seed?.definitions, seed?.runs)
+  const domain = seed?.currentDomain ?? new MemoryDomain(seed?.definitions, seed?.runs)
   const legacyDefinitions = new MemoryTable(new Map((seed?.legacyDefinitions ?? []).map(value => [value.id, value])))
   const legacyRuns = new MemoryTable(new Map((seed?.legacyRuns ?? []).map(value => [value.id, value])))
   const legacyDomain = {
     table: (name: 'definitions' | 'runs') => name === 'definitions' ? legacyDefinitions : legacyRuns,
     close: async () => {},
   }
+  const attachedSessions: Array<{ workspaceId: string; sessionId: string }> = []
   const workspace = {
-    id: 'workspace-1', title: 'Repository', path: '/workspace/repo',
+    id: 'workspace-1', title: 'Repository', path: seed?.workspacePath ?? '/workspace/repo',
     status: async () => 'ok' as const,
-    attachSession: async () => {},
+    attachSession: async (sessionId: string) => { attachedSessions.push({ workspaceId: 'workspace-1', sessionId }) },
   }
   const otherWorkspace = {
     id: 'workspace-2', title: 'Other repository', path: '/workspace/other',
     status: async () => 'ok' as const,
-    attachSession: async () => {},
+    attachSession: async (sessionId: string) => { attachedSessions.push({ workspaceId: 'workspace-2', sessionId }) },
   }
   const sourceAgent = {
     id: scope.sessionId,
@@ -132,6 +150,7 @@ async function harness(seed?: {
   let liveSourceAgent: typeof sourceAgent | undefined = sourceAgent
   const archivedSessionIds: string[] = []
   const warnings: string[] = []
+  const lifecycleEvents: AutomationLifecycleEvent[] = []
   const runSession = {
     seq: 0,
     events: [] as Array<{ seq: number; type: string; data: Record<string, unknown> }>,
@@ -150,7 +169,11 @@ async function harness(seed?: {
     cancel: () => {},
   }
   const ctx = {
-    storageDomain: { open: async (spec: { name: string }) => spec.name === 'dsh_automation' ? legacyDomain : domain },
+    storageDomain: { open: async (spec: { name: string }) => {
+      if (spec.name === 'dsh_automation') return legacyDomain
+      domain.reopen()
+      return domain
+    } },
     workspaceRegistry: {
       get archivedSessionIds() { return archivedSessionIds },
       list: () => [workspace, otherWorkspace],
@@ -161,7 +184,7 @@ async function harness(seed?: {
         if (path === otherWorkspace.path) return otherWorkspace
         return undefined
       },
-      get: () => workspace,
+      get: (id: string) => id === workspace.id ? workspace : id === otherWorkspace.id ? otherWorkspace : undefined,
       archiveSession: async (sessionId: string) => {
         if (seed?.rejectArchive) throw new Error('archive unavailable')
         if (!archivedSessionIds.includes(sessionId)) archivedSessionIds.push(sessionId)
@@ -174,9 +197,22 @@ async function harness(seed?: {
         return undefined
       },
       withoutInitiator: (task: () => unknown) => task(),
-      create: async (input: { setup: (ctx: unknown) => Promise<void> }) => {
+      create: async (input: { setup: (ctx: unknown) => Promise<void>; meta: { cwd: string } }) => {
         if (!seed?.completeRuns) throw new Error('executor is not expected in service unit tests')
-        await input.setup({ agent: runAgent, tools: { guard: () => {} } })
+        const registered: Array<{ name: string }> = []
+        let allow: readonly string[] | undefined
+        await input.setup({
+          agent: runAgent,
+          tools: {
+            guard: () => {},
+            register: (tool: { name: string }) => { registered.push(tool); return () => {} },
+            schemas: () => [
+              { name: 'read' }, { name: 'automation_create' }, { name: 'mcp__strict__write' }, ...registered,
+            ].filter(tool => allow === undefined || tool.name === 'automation_report_outcome' || allow.includes(tool.name)),
+            restrict: (filter: { allow: readonly string[] }) => { allow = filter.allow },
+          },
+        })
+        await seed?.mutateExecutionCwd?.(input.meta.cwd)
         return { agent: runAgent, dispose: async () => {} }
       },
     },
@@ -213,15 +249,23 @@ async function harness(seed?: {
     },
     sessionTitle: { rename: () => {} },
     sessions: { flush: async () => true },
+    emit: (name: string, event: AutomationLifecycleEvent) => {
+      if (name === 'automation/lifecycle') lifecycleEvents.push(event)
+    },
     logger: { warn: (message: string) => { warnings.push(message) } },
   }
-  const service = await AutomationService.open(ctx as never, { ...defaults, ...seed?.config })
+  const config = { ...defaults, ...seed?.config }
+  const reopenService = () => AutomationService.open(ctx as never, config)
+  const service = await reopenService()
   return {
     service,
     domain,
     archivedSessionIds,
+    attachedSessions,
+    lifecycleEvents,
     warnings,
     removeSourceAgent: () => { liveSourceAgent = undefined },
+    reopenService,
   }
 }
 
@@ -340,12 +384,71 @@ test('legacy definitions and runs import once while source records remain unchan
     detectedRuns: 1,
     importedDefinitions: 1,
     importedRuns: 1,
+    plannedDefinitions: 1,
+    plannedRuns: 1,
+    skippedDeletedDefinitions: 0,
+    sourceFingerprint: snapshot.migration.sourceFingerprint,
   })
+  assert.match(snapshot.migration.sourceFingerprint ?? '', /^[a-f0-9]{64}$/)
   assert.equal(snapshot.definitions[0]?.runTimeoutMinutes, 1)
   assert.equal(snapshot.runs[0]?.targetSnapshot.runTimeoutMinutes, 1)
   assert.equal('runTimeoutMinutes' in legacyDefinition, false)
   assert.equal('runTimeoutMinutes' in legacyRun.targetSnapshot, false)
   await service.dispose()
+})
+
+test('legacy migration validates every conflict before writing any destination record', async () => {
+  const existing = storedDefinition('2026-08-13T00:00:00.000Z')
+  const existingRun = createManualRun(existing, '2026-08-13T00:01:00.000Z', 'conflict-run')
+  const currentDomain = new MemoryDomain([existing], [existingRun])
+  const pending = createDefinition({
+    ...existing,
+    id: 'automation-pending-import',
+    name: 'Pending import',
+    now: '2026-08-13T00:00:00.000Z',
+  })
+  const { runTimeoutMinutes: _pendingTimeout, ...legacyPending } = pending
+  const { runTimeoutMinutes: _targetTimeout, ...legacyTarget } = existingRun.targetSnapshot
+  const {
+    admittedAt: _admittedAt, attempt: _attempt, sequence: _sequence,
+    outcome: _outcome, attention: _attention, effect: _effect,
+    effectiveContext: _effectiveContext, phase: _phase, lease: _lease,
+    effectiveModel: _effectiveModel, ...legacyRun
+  } = existingRun
+
+  await assert.rejects(() => harness({
+    currentDomain,
+    legacyDefinitions: [legacyPending as unknown as LegacyDefinition],
+    legacyRuns: [{
+      ...legacyRun, summary: 'conflicting legacy value', targetSnapshot: legacyTarget,
+    } as unknown as LegacyRun],
+  }), /legacy migration conflict for run/)
+  assert.equal(currentDomain.definitions.get(pending.id), undefined)
+  assert.equal(currentDomain.runs.get(existingRun.id)?.summary, existingRun.summary)
+})
+
+test('a committed legacy delete remains deleted after the service reopens', async () => {
+  const current = storedDefinition('2026-08-13T00:00:00.000Z')
+  const { runTimeoutMinutes: _definitionTimeout, ...legacyDefinition } = current
+  const fixture = await harness({
+    legacyDefinitions: [legacyDefinition as unknown as LegacyDefinition],
+  })
+
+  const receipt = await fixture.service.dispatch(scope, {
+    kind: 'delete', requestId: 'delete-imported-once', automationId: current.id,
+  })
+  assert.equal(receipt.outcome, 'committed')
+  await fixture.service.dispose()
+
+  const reopened = await fixture.reopenService()
+  try {
+    const snapshot = await reopened.snapshot(scope)
+    assert.equal(snapshot.definitions.some(definition => definition.id === current.id), false)
+    assert.equal(snapshot.migration.detectedDefinitions, 1)
+    assert.equal(snapshot.migration.importedDefinitions, 0)
+  } finally {
+    await reopened.dispose()
+  }
 })
 
 test('a queued run can be cancelled once and remains auditable', async () => {
@@ -398,6 +501,90 @@ test('snapshot exposes model catalog and structured health without starting a ru
   assert.equal(snapshot.definitions[0]?.health.status, 'blocked')
   assert.equal(snapshot.definitions[0]?.health.issues[0]?.code, 'model_unavailable')
   await service.dispose()
+})
+
+test('snapshot derives an overdue occurrence when no scheduled run was admitted', async (context) => {
+  const now = Date.parse('2026-08-13T00:06:00Z')
+  context.mock.timers.enable({ apis: ['Date'], now })
+  const definition = createDefinition({
+    id: 'automation-overdue',
+    name: 'Overdue task',
+    prompt: 'Return one bounded result.',
+    schedule: { kind: 'daily', time: '00:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    createdBy: { kind: 'web', sessionId: scope.sessionId },
+    now: '2026-08-12T23:00:00Z',
+  })
+  const { service } = await harness({ definitions: [definition] })
+  try {
+    const health = (await service.snapshot(scope)).definitions[0]!.health
+    assert.equal(health.status, 'overdue')
+    assert.equal(health.expectedAt, '2026-08-13T00:00:00.000Z')
+    assert.equal(health.admissionStatus, 'not_admitted')
+    assert.equal(health.overdueByMs, 6 * 60_000)
+    assert.equal(health.issues[0]?.code, 'occurrence_overdue')
+  } finally {
+    await service.dispose()
+  }
+})
+
+test('snapshot separates scheduled admission from queue wait and execution claim', async (context) => {
+  const now = Date.parse('2026-08-13T00:02:00Z')
+  context.mock.timers.enable({ apis: ['Date'], now })
+  const definition = createDefinition({
+    id: 'automation-admitted',
+    name: 'Admitted task',
+    prompt: 'Return one bounded result.',
+    schedule: { kind: 'daily', time: '00:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    createdBy: { kind: 'web', sessionId: scope.sessionId },
+    now: '2026-08-12T23:00:00Z',
+  })
+  const queued = {
+    ...createScheduledRun(definition, '2026-08-13T00:00:00Z'),
+    admittedAt: '2026-08-13T00:00:30Z',
+  }
+  const { service } = await harness({ definitions: [definition], runs: [queued] })
+  try {
+    const snapshot = await service.snapshot(scope)
+    const health = snapshot.definitions[0]!.health
+    assert.equal(health.status, 'ready')
+    assert.equal(health.admissionStatus, 'queued')
+    assert.equal(health.admittedAt, queued.admittedAt)
+    assert.equal(health.claimedAt, null)
+    assert.equal(health.queueWaitMs, 90_000)
+    assert.equal(snapshot.runs[0]?.admittedAt, queued.admittedAt)
+  } finally {
+    await service.dispose()
+  }
+})
+
+test('snapshot reports a queued run that was admitted but never claimed', async (context) => {
+  const now = Date.parse('2026-08-13T00:07:00Z')
+  context.mock.timers.enable({ apis: ['Date'], now })
+  const definition = createDefinition({
+    id: 'automation-queue-stalled',
+    name: 'Queue stalled task',
+    prompt: 'Return one bounded result.',
+    schedule: { kind: 'daily', time: '00:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    createdBy: { kind: 'web', sessionId: scope.sessionId },
+    now: '2026-08-12T23:00:00Z',
+  })
+  const queued = {
+    ...createScheduledRun(definition, '2026-08-13T00:00:00Z'),
+    admittedAt: '2026-08-13T00:00:30Z',
+  }
+  const { service } = await harness({ definitions: [definition], runs: [queued] })
+  try {
+    const health = (await service.snapshot(scope)).definitions[0]!.health
+    assert.equal(health.status, 'stalled')
+    assert.equal(health.admissionStatus, 'queued')
+    assert.equal(health.issues[0]?.code, 'queue_stalled')
+    assert.equal(health.queueWaitMs, 390_000)
+  } finally {
+    await service.dispose()
+  }
 })
 
 test('run preflight blocks an unavailable model before creating a Result Session', async () => {
@@ -710,6 +897,32 @@ test('opening after a host stop preserves queued work that never crossed the sid
   assert.equal(domain.closed, true)
 })
 
+test('startup recovery retries a pre-side-effect run as a new bounded attempt', async () => {
+  const definition = storedDefinition('2026-08-13T00:00:00Z')
+  const interrupted: AutomationRun = {
+    ...createManualRun(definition, '2026-08-13T00:05:00Z', 'safe-retry'),
+    status: 'running',
+    phase: 'setup',
+    lease: {
+      ownerId: 'dead-host', acquiredAt: '2026-08-13T00:05:10Z',
+      heartbeatAt: '2026-08-13T00:05:20Z', expiresAt: '2026-08-13T00:05:50Z',
+      sideEffectsPossible: false,
+    },
+    startedAt: '2026-08-13T00:05:10Z',
+  }
+  const { service, domain } = await harness({ definitions: [definition], runs: [interrupted] })
+  try {
+    const recovered = domain.runs.get(interrupted.id)!
+    assert.equal(recovered.status, 'queued')
+    assert.equal(recovered.attempt, 2)
+    assert.equal(recovered.outcome, 'pending')
+    assert.equal(recovered.attention, 'none')
+    assert.equal(recovered.effect.status, 'none')
+  } finally {
+    await service.dispose()
+  }
+})
+
 test('startup recovery archives a run that may have produced side effects and marks it interrupted', async () => {
   const definition = storedDefinition('2026-08-13T00:00:00Z')
   const interrupted: AutomationRun = {
@@ -734,6 +947,9 @@ test('startup recovery archives a run that may have produced side effects and ma
   try {
     assert.equal(domain.runs.get(interrupted.id)?.status, 'interrupted')
     assert.equal(domain.runs.get(interrupted.id)?.error?.code, 'host_interrupted')
+    assert.equal(domain.runs.get(interrupted.id)?.outcome, 'interrupted')
+    assert.equal(domain.runs.get(interrupted.id)?.attention, 'unknown')
+    assert.equal(domain.runs.get(interrupted.id)?.effect.status, 'unknown')
     assert.deepEqual(archivedSessionIds, [interrupted.sessionId])
   } finally {
     await service.dispose()
@@ -741,7 +957,7 @@ test('startup recovery archives a run that may have produced side effects and ma
 })
 
 test('supervisor persists every execution phase and clears its lease at terminal completion', async () => {
-  const { service, domain } = await harness({
+  const { service, domain, attachedSessions, lifecycleEvents } = await harness({
     completeRuns: true,
     config: { maxConcurrentRuns: 1 },
   })
@@ -763,6 +979,29 @@ test('supervisor persists every execution phase and clears its lease at terminal
     assert.equal(writes.some(run => run.lease?.sideEffectsPossible === true), true)
     assert.equal(domain.runs.get(queued.id)?.phase, null)
     assert.equal(domain.runs.get(queued.id)?.lease, null)
+    assert.equal(domain.runs.get(queued.id)?.outcome, 'unknown')
+    assert.equal(domain.runs.get(queued.id)?.attention, 'unknown')
+    assert.equal(domain.runs.get(queued.id)?.effect.status, 'completed')
+    assert.deepEqual(domain.runs.get(queued.id)?.effectiveContext, {
+      actor: { kind: 'automation', sourceKind: 'agent', sourceId: scope.sessionId },
+      permissionPreset: 'read-only',
+      agentPreset: 'code',
+      tools: [...domain.runs.get(queued.id)!.effectiveContext!.tools].sort(),
+      approvalPolicy: 'never',
+      backgroundProcesses: false,
+      capturedAt: domain.runs.get(queued.id)!.startedAt,
+    })
+    assert.equal(domain.runs.get(queued.id)!.effectiveContext!.tools.includes('automation_create'), false)
+    assert.equal(domain.runs.get(queued.id)!.effectiveContext!.tools.includes('automation_report_outcome'), true)
+    assert.deepEqual(attachedSessions, [{
+      workspaceId: 'workspace-1', sessionId: domain.runs.get(queued.id)!.sessionId!,
+    }])
+    const runEvents = lifecycleEvents.filter(event => event.runId === queued.id)
+    assert.deepEqual(runEvents.map(event => event.sequence), [1, 2, 3, 4, 5, 6])
+    assert.deepEqual(runEvents.map(event => event.kind), [
+      'admitted', 'phase', 'phase', 'phase', 'phase', 'terminal',
+    ])
+    assert.equal(runEvents.at(-1)?.attention, 'unknown')
   } finally {
     await service.dispose()
   }
@@ -790,6 +1029,45 @@ test('configured run-session archival hides a completed Session without deleting
     assert.equal((await service.snapshot(scope)).runs[0]?.sessionArchived, true)
   } finally {
     await service.dispose()
+  }
+})
+
+test('worktree review isolates edits and accepts them only through the review command', async () => {
+  const repository = await mkdtemp(join(tmpdir(), 'automation-service-review-'))
+  await execFileAsync('git', ['-C', repository, 'init'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.name', 'Automation Test'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.email', 'automation@example.invalid'])
+  await writeFile(join(repository, 'base.txt'), 'base\n')
+  await execFileAsync('git', ['-C', repository, 'add', 'base.txt'])
+  await execFileAsync('git', ['-C', repository, 'commit', '-m', 'base'])
+  const fixture = await harness({
+    completeRuns: true,
+    workspacePath: repository,
+    config: { maxConcurrentRuns: 1 },
+    mutateExecutionCwd: cwd => writeFile(join(cwd, 'review.txt'), 'reviewed\n'),
+  })
+  try {
+    const definition = await fixture.service.create(scope, {
+      name: 'Worktree review', prompt: 'Create review.txt.',
+      schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+      permissionPreset: 'workspace-write', reviewMode: 'worktree',
+    })
+    const queued = await fixture.service.runNow(scope, definition.id)
+    fixture.service.start()
+    await waitFor(() => fixture.domain.runs.get(queued.id)?.status === 'succeeded')
+    const completed = fixture.domain.runs.get(queued.id)!
+    assert.equal(completed.review?.status, 'ready')
+    assert.match(completed.review?.diffStat ?? '', /review\.txt/)
+    await assert.rejects(() => readFile(join(repository, 'review.txt'), 'utf8'), /ENOENT/)
+
+    const accepted = await fixture.service.reviewRun(
+      { creatorKind: 'web' }, completed.id, 'accept',
+    )
+    assert.equal(accepted.review?.status, 'accepted')
+    assert.equal(accepted.attention, 'none')
+    assert.equal(normalizeLineEndings(await readFile(join(repository, 'review.txt'), 'utf8')), 'reviewed\n')
+  } finally {
+    await fixture.service.dispose()
   }
 })
 

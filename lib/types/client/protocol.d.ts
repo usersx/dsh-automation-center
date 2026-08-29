@@ -1,7 +1,10 @@
 /** JSON contract shared conceptually with the dsh-automation Host RPC adapter. */
 export type AutomationStatus = 'active' | 'paused';
 export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled' | 'interrupted';
+export type AutomationOutcome = 'pending' | 'unknown' | 'no_change' | 'changes_ready' | 'needs_input' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'interrupted' | 'skipped' | 'partial';
+export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown';
 export type AutomationPermission = 'read-only' | 'workspace-write';
+export type AutomationReviewMode = 'direct' | 'worktree';
 export type AutomationModelPolicy = {
     readonly mode: 'inherit';
 } | {
@@ -49,12 +52,13 @@ export interface AutomationViewModel {
     readonly scheduleSummary: string;
     readonly timeZone: string;
     readonly permission: AutomationPermission;
+    readonly reviewMode: AutomationReviewMode;
     readonly workspaceId: string;
     readonly workspaceName: string;
     readonly agentPreset: string;
     readonly modelPolicy: AutomationModelPolicy;
     readonly health: {
-        readonly status: 'ready' | 'blocked';
+        readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled';
         readonly issues: readonly {
             readonly code: string;
             readonly message: string;
@@ -64,6 +68,13 @@ export interface AutomationViewModel {
             readonly model: string;
             readonly reasoningEffort?: string;
         };
+        readonly expectedAt?: string | null;
+        readonly admittedAt?: string | null;
+        readonly claimedAt?: string | null;
+        readonly lastProgressAt?: string | null;
+        readonly overdueByMs?: number;
+        readonly queueWaitMs?: number | null;
+        readonly admissionStatus?: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal';
     };
     readonly runTimeoutMinutes: number;
     readonly nextRunAt?: string;
@@ -77,6 +88,15 @@ export interface AutomationRunViewModel {
     readonly automationId: string;
     readonly automationName: string;
     readonly status: AutomationRunStatus;
+    readonly attempt?: number;
+    readonly sequence?: number;
+    readonly outcome?: AutomationOutcome;
+    readonly attention?: AutomationAttention;
+    readonly effect?: {
+        readonly status: 'none' | 'possible' | 'completed' | 'unknown';
+        readonly updatedAt: string;
+        readonly externalId?: string;
+    };
     readonly phase?: 'claim' | 'setup' | 'executing' | 'settling' | 'delivery';
     readonly heartbeatAt?: string;
     readonly leaseExpiresAt?: string;
@@ -86,8 +106,22 @@ export interface AutomationRunViewModel {
         readonly model: string;
         readonly reasoningEffort?: string;
     };
+    readonly effectiveContext?: {
+        readonly actor: {
+            readonly kind: 'automation';
+            readonly sourceKind: 'agent' | 'web';
+            readonly sourceId: string;
+        };
+        readonly permissionPreset: AutomationPermission;
+        readonly agentPreset: string;
+        readonly tools: readonly string[];
+        readonly approvalPolicy: 'never';
+        readonly backgroundProcesses: false;
+        readonly capturedAt: string;
+    };
     readonly trigger: 'schedule' | 'manual' | 'catch-up';
     readonly scheduledFor: string;
+    readonly admittedAt?: string;
     readonly startedAt?: string;
     readonly finishedAt?: string;
     readonly sessionId?: string;
@@ -96,6 +130,18 @@ export interface AutomationRunViewModel {
     readonly error?: string;
     readonly errorCode?: string;
     readonly unread?: boolean;
+    readonly review?: {
+        readonly mode: 'worktree';
+        readonly status: 'ready' | 'kept' | 'accepted' | 'discarded' | 'failed';
+        readonly baseSha: string;
+        readonly worktreePath: string;
+        readonly patchSha256: string | null;
+        readonly diffStat: string | null;
+        readonly error?: {
+            readonly code: string;
+            readonly message: string;
+        };
+    };
 }
 export interface AutomationSnapshot {
     readonly filterWorkspaceId?: string;
@@ -122,6 +168,10 @@ export interface AutomationSnapshot {
         readonly detectedRuns: number;
         readonly importedDefinitions: number;
         readonly importedRuns: number;
+        readonly plannedDefinitions?: number;
+        readonly plannedRuns?: number;
+        readonly skippedDeletedDefinitions?: number;
+        readonly sourceFingerprint?: string;
     };
     readonly serverNow: string;
 }
@@ -131,6 +181,7 @@ export interface CreateAutomationInput {
     readonly schedule: AutomationSchedule;
     readonly timeZone: string;
     readonly permission: AutomationPermission;
+    readonly reviewMode: AutomationReviewMode;
     readonly workspaceId: string;
     readonly agentPreset: string;
     readonly modelPolicy: AutomationModelPolicy;
@@ -142,6 +193,7 @@ export interface UpdateAutomationInput {
     readonly schedule?: AutomationSchedule;
     readonly timeZone?: string;
     readonly permission?: AutomationPermission;
+    readonly reviewMode?: AutomationReviewMode;
     readonly agentPreset?: string;
     readonly runTimeoutMinutes?: number;
     readonly modelPolicy?: AutomationModelPolicy;
@@ -181,6 +233,12 @@ export interface CancelRunRequest {
     readonly workspaceId?: string;
     readonly clientRequestId: string;
     readonly runId: string;
+}
+export interface ReviewRunRequest {
+    readonly workspaceId?: string;
+    readonly clientRequestId: string;
+    readonly runId: string;
+    readonly action: 'accept' | 'keep' | 'discard';
 }
 export interface AutomationCommandReceipt {
     readonly requestId: string;

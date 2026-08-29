@@ -42,17 +42,23 @@ const targetSnapshotShape = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
   permissionPreset,
+  reviewMode: z.enum(['direct', 'worktree']),
   runTimeoutMinutes: z.number().int().min(1).max(1_440),
+}).superRefine((value, ctx) => {
+  if (value.reviewMode === 'worktree' && value.permissionPreset !== 'workspace-write') {
+    ctx.addIssue({ code: 'custom', message: 'worktree review requires workspace-write permission', path: ['reviewMode'] })
+  }
 })
 
 function legacyPolicy(value: unknown): unknown {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
   const record = value as Record<string, unknown>
-  if (record.modelPolicy !== undefined) return value
-  const modelPolicy: ModelPolicy = typeof record.provider === 'string' && typeof record.model === 'string'
-    ? { mode: 'pinned', provider: record.provider, model: record.model }
-    : { mode: 'inherit' }
-  return { ...record, modelPolicy }
+  const resolvedPolicy: ModelPolicy = record.modelPolicy !== undefined
+    ? record.modelPolicy as ModelPolicy
+    : typeof record.provider === 'string' && typeof record.model === 'string'
+      ? { mode: 'pinned', provider: record.provider, model: record.model }
+      : { mode: 'inherit' }
+  return { ...record, modelPolicy: resolvedPolicy, reviewMode: record.reviewMode ?? 'direct' }
 }
 
 const targetSnapshot = z.preprocess(legacyPolicy, targetSnapshotShape)
@@ -74,6 +80,7 @@ const automationDefinitionShape = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
   permissionPreset,
+  reviewMode: z.enum(['direct', 'worktree']),
   runTimeoutMinutes: z.number().int().min(1).max(1_440),
   createdBy: creator,
   createdAt: instant,
@@ -91,6 +98,9 @@ const automationDefinitionShape = z.object({
     if (value.provider !== expectedProvider || value.model !== expectedModel) {
       ctx.addIssue({ code: 'custom', message: 'provider/model must match modelPolicy', path: ['modelPolicy'] })
     }
+    if (value.reviewMode === 'worktree' && value.permissionPreset !== 'workspace-write') {
+      ctx.addIssue({ code: 'custom', message: 'worktree review requires workspace-write permission', path: ['reviewMode'] })
+    }
   } catch (error) {
     ctx.addIssue({ code: 'custom', message: String(error), path: ['schedule'] })
   }
@@ -102,6 +112,11 @@ export const automationDefinitionSchema: z.ZodType<AutomationDefinition> = z.pre
 ) as z.ZodType<AutomationDefinition>
 
 const runPhase = z.enum(['claim', 'setup', 'executing', 'settling', 'delivery'])
+const runOutcome = z.enum([
+  'pending', 'unknown', 'no_change', 'changes_ready', 'needs_input', 'succeeded',
+  'failed', 'blocked', 'cancelled', 'interrupted', 'skipped', 'partial',
+])
+const runAttention = z.enum(['none', 'review', 'needs_input', 'failed', 'blocked', 'unknown'])
 const automationRunShape = z.object({
   version: z.literal(1),
   id: nonBlank,
@@ -110,6 +125,9 @@ const automationRunShape = z.object({
   occurrenceKey: nonBlank,
   trigger: z.enum(['schedule', 'manual']),
   scheduledFor: instant,
+  admittedAt: instant,
+  attempt: z.number().int().positive(),
+  sequence: z.number().int().nonnegative(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled', 'interrupted']),
   phase: runPhase.nullable(),
   lease: z.object({
@@ -126,11 +144,40 @@ const automationRunShape = z.object({
   finishedAt: instant.nullable(),
   summary: z.string().nullable(),
   error: z.object({ code: nonBlank, message: nonBlank }).nullable(),
+  outcome: runOutcome,
+  attention: runAttention,
+  effect: z.object({
+    status: z.enum(['none', 'possible', 'completed', 'unknown']),
+    updatedAt: instant,
+    externalId: nonBlank.optional(),
+  }),
   unread: z.boolean(),
   effectiveModel: z.object({
     provider: nonBlank,
     model: nonBlank,
     reasoningEffort: nonBlank.optional(),
+  }).nullable(),
+  effectiveContext: z.object({
+    actor: z.object({
+      kind: z.literal('automation'),
+      sourceKind: z.enum(['agent', 'web']),
+      sourceId: nonBlank,
+    }),
+    permissionPreset,
+    agentPreset: nonBlank,
+    tools: z.array(nonBlank),
+    approvalPolicy: z.literal('never'),
+    backgroundProcesses: z.literal(false),
+    capturedAt: instant,
+  }).nullable(),
+  review: z.object({
+    mode: z.literal('worktree'),
+    status: z.enum(['ready', 'kept', 'accepted', 'discarded', 'failed']),
+    baseSha: nonBlank,
+    worktreePath: nonBlank,
+    patchSha256: nonBlank.nullable(),
+    diffStat: z.string().nullable(),
+    error: z.object({ code: nonBlank, message: nonBlank }).optional(),
   }).nullable(),
 })
 
@@ -138,11 +185,39 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw
   const record = raw as Record<string, unknown>
   const status = record.status
+  const outcome = record.outcome ?? (
+    status === 'queued' || status === 'running' ? 'pending'
+      : status === 'succeeded' ? 'succeeded'
+        : status === 'failed' ? 'failed'
+          : status === 'cancelled' ? 'cancelled'
+            : status === 'interrupted' ? 'interrupted'
+              : status === 'skipped' ? 'skipped'
+                : 'unknown'
+  )
   return {
     ...record,
+    admittedAt: record.admittedAt ?? record.scheduledFor,
+    attempt: record.attempt ?? 1,
+    sequence: record.sequence ?? 0,
     phase: record.phase ?? (status === 'queued' ? 'claim' : status === 'running' ? 'executing' : null),
     lease: record.lease ?? null,
     effectiveModel: record.effectiveModel ?? null,
+    effectiveContext: record.effectiveContext ?? null,
+    review: record.review ?? null,
+    outcome,
+    attention: record.attention ?? (
+      outcome === 'failed' || outcome === 'interrupted' ? 'failed'
+        : outcome === 'blocked' ? 'blocked'
+          : outcome === 'needs_input' ? 'needs_input'
+            : outcome === 'unknown' || outcome === 'partial' ? 'unknown'
+              : 'none'
+    ),
+    effect: record.effect ?? {
+      status: (record.lease as { sideEffectsPossible?: unknown } | null | undefined)?.sideEffectsPossible === true
+        ? 'possible'
+        : 'none',
+      updatedAt: record.finishedAt ?? record.startedAt ?? record.admittedAt ?? record.scheduledFor,
+    },
   }
 }, automationRunShape) as z.ZodType<AutomationRun>
 
@@ -158,7 +233,10 @@ export const automationDomainSpec = {
     runs: { valueSchema: automationRunSchema },
     receipts: { valueSchema: z.object({
       requestId: nonBlank,
-      command: z.enum(['create', 'update', 'pause', 'resume', 'delete', 'run-now', 'cancel-run', 'mark-read']),
+      command: z.enum([
+        'create', 'update', 'pause', 'resume', 'delete', 'run-now', 'cancel-run', 'mark-read',
+        'review-accept', 'review-keep', 'review-discard',
+      ]),
       outcome: z.enum(['committed', 'rejected', 'unknown']),
       entityId: nonBlank.optional(),
       revision: z.number().int().positive().optional(),
@@ -191,6 +269,7 @@ export function createDefinition(input: CreateAutomationInput): AutomationDefini
     provider: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.provider : null,
     model: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.model : null,
     permissionPreset: input.permissionPreset ?? 'read-only',
+    reviewMode: input.reviewMode ?? 'direct',
     runTimeoutMinutes: input.runTimeoutMinutes ?? 60,
     createdBy: input.createdBy,
     createdAt: now,
@@ -223,6 +302,7 @@ export function updateDefinition(
     provider: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.provider : null,
     model: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.model : null,
     permissionPreset: input.permissionPreset ?? current.permissionPreset,
+    reviewMode: input.reviewMode ?? current.reviewMode,
     runTimeoutMinutes: input.runTimeoutMinutes ?? current.runTimeoutMinutes,
     updatedAt: parseInstant(input.now, 'now'),
   })
@@ -301,6 +381,9 @@ function queuedRun(
     occurrenceKey: key,
     trigger,
     scheduledFor,
+    admittedAt: scheduledFor,
+    attempt: 1,
+    sequence: 0,
     status: 'queued',
     phase: 'claim',
     lease: null,
@@ -313,6 +396,7 @@ function queuedRun(
       provider: definition.provider,
       model: definition.model,
       permissionPreset: definition.permissionPreset,
+      reviewMode: definition.reviewMode,
       runTimeoutMinutes: definition.runTimeoutMinutes,
     },
     sessionId: null,
@@ -320,8 +404,13 @@ function queuedRun(
     finishedAt: null,
     summary: null,
     error: null,
+    outcome: 'pending',
+    attention: 'none',
+    effect: { status: 'none', updatedAt: scheduledFor },
     unread: true,
     effectiveModel: null,
+    effectiveContext: null,
+    review: null,
   })
 }
 

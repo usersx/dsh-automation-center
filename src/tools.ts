@@ -33,6 +33,7 @@ interface CreateArgs extends ScheduleArgs {
   readonly provider?: string
   readonly model?: string
   readonly reasoning_effort?: string
+  readonly review_mode?: 'direct' | 'worktree'
 }
 
 interface UpdateArgs extends ScheduleArgs {
@@ -45,6 +46,7 @@ interface UpdateArgs extends ScheduleArgs {
   readonly provider?: string
   readonly model?: string
   readonly reasoning_effort?: string
+  readonly review_mode?: 'direct' | 'worktree'
 }
 
 interface IdArgs { readonly id: string }
@@ -165,6 +167,7 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
         provider: { type: 'string', description: 'Required when model_mode is pinned.' },
         model: { type: 'string', description: 'Required when model_mode is pinned.' },
         reasoning_effort: { type: 'string', description: 'Optional reasoning effort for a pinned model.' },
+        review_mode: { type: 'string', enum: ['direct', 'worktree'], description: 'Use an isolated Git worktree for review; requires workspace-write permission.' },
       },
       output: JSON_OUTPUT,
       async execute(args: CreateArgs, exec: ToolRunContext) {
@@ -179,6 +182,7 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
               schedule: scheduleFromArgs(args, now),
               permissionPreset: args.permission ?? 'read-only',
               modelPolicy: modelPolicyFromArgs(args, true) ?? { mode: 'inherit' },
+              reviewMode: args.review_mode ?? 'direct',
             },
           }, exec.signal)
           return commandResult(receipt)
@@ -226,6 +230,7 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
         provider: { type: 'string' },
         model: { type: 'string' },
         reasoning_effort: { type: 'string' },
+        review_mode: { type: 'string', enum: ['direct', 'worktree'] },
       },
       output: JSON_OUTPUT,
       async execute(args: UpdateArgs, exec: ToolRunContext) {
@@ -239,11 +244,13 @@ export function registerAutomationTools(service: AutomationService, agent: ToolA
             schedule?: AutomationSchedule
             permissionPreset?: PermissionPreset
             modelPolicy?: ModelPolicy
+            reviewMode?: 'direct' | 'worktree'
           } = {}
           if (args.name !== undefined) input.name = String(args.name)
           if (args.prompt !== undefined) input.prompt = String(args.prompt)
           if (args.status !== undefined) input.status = args.status as 'active' | 'paused'
           if (args.permission !== undefined) input.permissionPreset = args.permission as PermissionPreset
+          if (args.review_mode !== undefined) input.reviewMode = args.review_mode
           const modelPolicy = modelPolicyFromArgs(args, false)
           if (modelPolicy !== undefined) input.modelPolicy = modelPolicy
           if (args.kind !== undefined) input.schedule = scheduleFromArgs(args, new Date().toISOString())

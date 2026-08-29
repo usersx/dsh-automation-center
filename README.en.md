@@ -14,10 +14,10 @@ DSH Automation Center adds scheduled, auditable Agent runs to [DeepSeek Harness]
 
 The same package selects the deepest native surface available, without DOM injection or Sidebar replacement:
 
-- **Stock compatibility mode:** unmodified DSH from `0.1.0-rc.8` through the current `0.1.1-rc.2` exposes a global **Settings → Automations** section that works without a Session; the **Automation** Conversation tab remains a shortcut. No Shell Page Patch is required.
+- **Stock compatibility mode:** unmodified DSH from `0.1.0-rc.8` through the current `0.1.2-alpha.1` exposes a global **Settings → Automations** section that works without a Session; the **Automation** Conversation tab remains a shortcut. No Shell Page Patch is required.
 - **Global center mode:** when DSH exposes `sidebar.primary.action` and `shell.page`, the plugin automatically moves to a root action below **New Session** and above **Workspaces**.
 
-> Current version: `0.1.0-alpha.6`. Compatibility validation is not a security audit.
+> Current version: `0.1.0-alpha.7`. Compatibility validation is not a security audit.
 
 ## Install from npm
 
@@ -34,7 +34,7 @@ dsh plugin --profile desktop add dsh-automation-center@latest
 Use a fixed version for reproducible installs:
 
 ```sh
-dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.6
+dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.7
 ```
 
 Fully quit and reopen DSH after installation. Use Node.js `^22.19.0` or `>=24.0.0`. Remove or disable `@dsh-external/dsh-automation`; when both schedulers are present, this plugin reports `AUTOMATION_PLUGIN_CONFLICT` instead of scheduling twice.
@@ -51,6 +51,9 @@ Fully quit and reopen DSH after installation. Use Node.js `^22.19.0` or `>=24.0.
 - Workspace, preset and model preflight exposes blocked definitions before a useless Session is created.
 - Idempotent commands, overlap protection, deterministic claims, bounded misfire handling and conservative restart recovery.
 - Supervisor phases, lease heartbeats and a whole-job deadline covering preflight through delivery.
+- Derived expected/admitted/claimed/queue/progress health plus structured Outcome/Attention, attempts and side-effect uncertainty.
+- Optional isolated Git worktree review with clean-base enforcement, patch hash/stat, and accept/keep/discard actions.
+- Lifecycle events carry runId/revision/sequence; the model sees only tools allowed by the effective unattended policy.
 - Durable write receipts with request ID, revision and `committed | rejected | unknown` outcomes, followed by an authoritative Client read.
 - Durable history, summaries, Result Session links, effective model and structured error codes.
 - Read-only migration from legacy `dsh_automation` v1 data.
@@ -86,7 +89,7 @@ The following three screenshots show **global center mode** when both Shell slot
 
 ```text
 DSH Surface Adapter
-  ├─ stock 0.1.0-rc.8 + 0.1.1-rc.2: settings.section + conversation.view shortcut
+  ├─ stock 0.1.0-rc.8 → 0.1.2-alpha.1: settings.section + conversation.view shortcut
   └─ enhanced: sidebar.primary.action + shell.page
                          │
                          ▼
@@ -99,7 +102,7 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definitions / Ru
                               Result Session + audit
 ```
 
-The Host-side `AutomationEngine` is the deep module. Both Client adapters, loopback RPC, scheduler and Agent tools share its `snapshot` / `dispatch` boundary instead of accessing storage directly.
+The Host-side `AutomationEngine` is the deep module. Both Client adapters, authenticated RPC, scheduler and Agent tools share its `snapshot` / `dispatch` boundary instead of accessing storage directly.
 
 ## Compatibility
 
@@ -107,17 +110,18 @@ The Host-side `AutomationEngine` is the deep module. Both Client adapters, loopb
 |---|---|---|---|
 | stock DSH `0.1.0-rc.8` / Web | no patch | global Settings section + Conversation shortcut | alpha.6 full Web end-to-end pass |
 | stock DSH `0.1.1-rc.2` / Web | no patch | global Settings section + Conversation shortcut | fixed npm install, Host/Client activation, no-Workspace empty state and browser-console checks pass; full Agent Run not repeated |
-| macOS DSH Desktop `2.0.1` | no patch | global Settings section + Conversation shortcut | alpha.6 real-model end-to-end and three cold starts pass; this is not an rc.2 Desktop result |
+| stock DSH `0.1.2-alpha.1` / Web | no patch | global Settings section + Conversation shortcut | Alpha.7 local tarball install, Host/Client, create/run, failed terminal, Result Session and Attention readback pass; successful real-model Run awaits final acceptance |
+| macOS DSH Desktop `2.0.3` (bundled DSH `0.1.1-rc.2`) | no patch | global Settings section + Conversation shortcut | Alpha.7 final tarball upgrade, successful real-model Run, structured Outcome, Result Session, and three cold starts pass |
 | DSH exposing both Shell slots / Web | same package | global root page | observed pass |
 | native Windows / Linux Desktop | — | selected from target capability | not yet observed |
 
-As of `0.1.1-rc.2`, stock DSH still has no `sidebar.primary.action` or `shell.page`, so a plugin cannot add a true Sidebar root action through public APIs. It can still provide global management through the native `settings.section`. This project deliberately avoids a brittle DOM-injection imitation. Once the generic Shell slots land upstream, the same npm package enables Sidebar global-center mode automatically.
+As of `0.1.2-alpha.1`, stock DSH still has no `sidebar.primary.action` or `shell.page`, so a plugin cannot add a true Sidebar root action through public APIs. It can still provide global management through the native `settings.section`. This project deliberately avoids a brittle DOM-injection imitation. Once the generic Shell slots land upstream, the same npm package enables Sidebar global-center mode automatically.
 
-See the exact [alpha.6 acceptance results](docs/acceptance-results-2026-08-23-alpha.6.md), including blocked and unrun cases. The [alpha.5 record](docs/acceptance-results-2026-08-20.md) remains the observed runtime baseline.
+See the exact [alpha.7 acceptance results](docs/acceptance-results-2026-08-30-alpha.7.md), including blocked and unrun cases. The alpha.6 and alpha.5 records remain historical observed baselines.
 
 ## Safety boundaries
 
-- Management RPC accepts trusted loopback connections only.
+- Management RPC uses rc.8/rc.2 loopback authority and alpha.1 authenticated one-time-token channels; workspace/profile scope remains mandatory.
 - UI input accepts registered Workspace IDs, never arbitrary host paths.
 - Automation Agents cannot create more automations or wait for interactive approval.
 - Unattended tools are allowlisted and background-process escape is rejected.
@@ -132,12 +136,12 @@ pnpm install
 pnpm check
 ```
 
-CI runs typecheck, tests, build and repository validation on Linux, macOS and Windows, then installs the tarball into isolated unmodified DSH `0.1.0-rc.8` and `0.1.1-rc.2` profiles. The alpha.6 Release includes a fixed tarball, SHA-256, SPDX SBOM and GitHub/Sigstore build attestation, and its fixed npm version is public. The first npm publication used an authenticated CLI, so this project does not mislabel it as npm provenance.
+CI runs typecheck, tests, build and repository validation on Linux, macOS and Windows, then installs the tarball into isolated unmodified DSH `0.1.0-rc.8`, `0.1.1-rc.2`, and `0.1.2-alpha.1` profiles. The release workflow attaches a fixed tarball, SHA-256, SPDX SBOM, and GitHub/Sigstore build attestation; npm publication is complete only after workflow and registry readback.
 
 ## Documentation
 
 - [Acceptance criteria (Chinese)](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-criteria.zh-CN.md)
-- [Alpha.6 acceptance results, including rc.2 re-validation](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-23-alpha.6.md)
+- [Alpha.7 acceptance results](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-30-alpha.7.md)
 - [Technical design (Chinese)](https://github.com/usersx/dsh-automation-center/blob/main/docs/technical-design.zh-CN.md)
 - [Release process](https://github.com/usersx/dsh-automation-center/blob/main/docs/releasing.md)
 - [Changelog](CHANGELOG.md)
@@ -148,8 +152,8 @@ CI runs typecheck, tests, build and repository validation on Linux, macOS and Wi
 
 ## Known limitations
 
-- Stock DSH `0.1.1-rc.2` provides global management in Settings; a Sidebar root action still requires the two generic upstream slots.
-- The `0.1.1-rc.2` Web install and activation smoke passes; rc.2 Desktop and a full rc.2 real-model Run remain unobserved.
+- Stock DSH `0.1.2-alpha.1` provides global management in Settings; a Sidebar root action still requires the two generic upstream slots.
+- The `0.1.2-alpha.1` Web Alpha.7 final artifact passes install, activation, RPC, direct/worktree failure-path, and Result Session checks; macOS Desktop 2.0.3 passes an Alpha.7 real-model Run and three cold starts.
 - The first release has no distributed scheduler, remote workers or cloud credential vault.
 - Cancellation cannot undo file changes or external calls that already occurred.
 - This remains an Alpha; stable release gates are defined in the acceptance documents.
