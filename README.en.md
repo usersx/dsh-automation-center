@@ -19,23 +19,21 @@ The same package selects the deepest native surface available, without DOM injec
 
 > Current version: `0.1.0-alpha.7`. Compatibility validation is not a security audit.
 
-## Install from npm
+## Install Alpha.7 from GitHub Releases
+
+Download [dsh-automation-center-0.1.0-alpha.7.tgz](https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.7/dsh-automation-center-0.1.0-alpha.7.tgz), then install it from the download directory.
 
 ```sh
-dsh plugin --profile web add dsh-automation-center@latest
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.7.tgz
 ```
 
 Desktop profile:
 
 ```sh
-dsh plugin --profile desktop add dsh-automation-center@latest
+dsh plugin --profile desktop add ./dsh-automation-center-0.1.0-alpha.7.tgz
 ```
 
-Use a fixed version for reproducible installs:
-
-```sh
-dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.7
-```
+The Release also provides a [SHA-256 file](https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.7/dsh-automation-center-0.1.0-alpha.7.tgz.sha256), [SPDX SBOM](https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.7/dsh-automation-center-0.1.0-alpha.7.spdx.json), and GitHub/Sigstore build attestation. npm Trusted Publishing currently returns E404 for package permissions, so Alpha.7 is not in the registry and `@latest` is not this Release.
 
 Fully quit and reopen DSH after installation. Use Node.js `^22.19.0` or `>=24.0.0`. Remove or disable `@dsh-external/dsh-automation`; when both schedulers are present, this plugin reports `AUTOMATION_PLUGIN_CONFLICT` instead of scheduling twice.
 

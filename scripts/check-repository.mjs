@@ -27,8 +27,14 @@ for (const marker of ['SC-01', 'B-01', 'C-01', 'D-01', 'E-01', '一票否决项'
 
 const manifest = JSON.parse(await readFile('package.json', 'utf8'))
 const readme = await readFile('README.md', 'utf8')
-for (const marker of ['dsh-automation-center@latest', `dsh-automation-center@${manifest.version}`, '原版兼容模式', 'settings.section']) {
+const releaseTarball = `dsh-automation-center-${manifest.version}.tgz`
+const releaseUrl = `releases/download/v${manifest.version}/${releaseTarball}`
+for (const marker of [releaseTarball, releaseUrl, '原版兼容模式', 'settings.section']) {
   if (!readme.includes(marker)) throw new Error(`README is missing release marker: ${marker}`)
+}
+const englishReadme = await readFile('README.en.md', 'utf8')
+for (const marker of [releaseTarball, releaseUrl, 'Stock compatibility mode', 'settings.section']) {
+  if (!englishReadme.includes(marker)) throw new Error(`English README is missing release marker: ${marker}`)
 }
 
 const ci = await readFile('.github/workflows/ci.yml', 'utf8')

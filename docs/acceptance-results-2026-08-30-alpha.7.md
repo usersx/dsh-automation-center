@@ -5,7 +5,7 @@
 - **源码质量门：PASS。** Node.js 24.20.0 下 typecheck、build、96/96 tests、repository check 与 `git diff --check` 通过。
 - **DSH `0.1.2-alpha.1` 最终制品 Web E2E：PASS。** `0.1.0-alpha.7` 最终 tgz 的全新 Profile 安装、Host/Client、一次性 Token、Settings、direct/worktree Definition、Run Now、失败终态、Result Session、Attention readback、review keep 与 console 均已观察。
 - **macOS Desktop：PASS。** DSH Desktop 2.0.3（内置 DSH `0.1.1-rc.2`）的 desktop Profile 升级到 Alpha.7 后，真实模型 Run、结构化 Outcome、Result Session 与三次冷启动回读均通过。
-- **GitHub/npm Release：NOT RUN。** 尚未推送、合并或创建 Release。
+- **GitHub Release：PASS；npm：BLOCKED。** prerelease `v0.1.0-alpha.7` 已从 `main@cd1f46c` 发布，资产/checksum/SBOM/attestation 均回读通过；npm Trusted Publishing 返回 E404 权限错误，registry 回读确认 Alpha.7 不存在。
 - **稳定版：NO-GO。** Alpha.7 仍是 prerelease；Windows/Linux Desktop GUI、卸载与强杀矩阵未全部完成。
 
 ## 已观察的 alpha.1 Web 链路
@@ -40,6 +40,19 @@
 
 本轮复用了历史命名为 `Alpha.6 Desktop E2E 2026-08-23` 的已暂停 Definition；新 Run 发生在 Profile 已回读为 Alpha.7 之后。保留这个名称是为了验证升级不破坏既有定义，而不是把历史 Alpha.6 结果冒充本次结果。
 
+## GitHub Release 与 npm 结果
+
+| 场景 | 状态 | 证据 |
+|---|---|---|
+| PR 与 main CI | PASS | [PR #14](https://github.com/usersx/dsh-automation-center/pull/14) 与发布韧性 [PR #16](https://github.com/usersx/dsh-automation-center/pull/16) 已合并；最终 `main@cd1f46c` 的三平台质量门和 rc.8/rc.2/alpha.1 安装矩阵全绿 |
+| GitHub prerelease | PASS | [`v0.1.0-alpha.7`](https://github.com/usersx/dsh-automation-center/releases/tag/v0.1.0-alpha.7)，target `cd1f46c6e8fc923d2eab921de01a86e42a3e7de2` |
+| Release 资产 | PASS | tgz 258,255 bytes、SHA-256 文件、SPDX 2.3 SBOM；SBOM 回读为 84 packages / 178 relationships |
+| SHA-256 | PASS | 发布 checksum 与下载 tarball 都为 `0f46fd0cbbd3140237b132bf2ee7a9095813055f21857d5ffc75c90fd84362b5` |
+| Build attestation | PASS | `gh attestation verify` 对下载的 tgz 退出 0；Release workflow 的 Sigstore attestation 步骤成功 |
+| npm Trusted Publishing | BLOCKED | provenance 已签名并进入透明日志，但 registry PUT 返回 E404 “not found or no permission”；官方 registry 回读 `0.1.0-alpha.7` 不存在 |
+
+npm 阻塞符合“需要额外包权限时先完成 GitHub Release”的发布边界；没有使用本机已登录身份绕过 Trusted Publisher，也没有把 npm 写成已发布。
+
 ## 本轮自动化覆盖
 
 - legacy delete tombstone 与迁移 dry-run/conflict。
@@ -55,4 +68,4 @@
 - Windows/Linux 原生 Desktop GUI。
 - 运行中卸载、五个 Supervisor phase 的真实进程强杀、真实系统 permission denial。
 - path-prefix reverse proxy 与 inventory `REQUEST_EXTENSION` 故障注入的真实页面闭环。
-- GitHub Release workflow、制品 attestation、npm Trusted Publisher 与 registry readback。
+- npm Trusted Publisher 的包权限配置与成功 registry 发布。

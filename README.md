@@ -19,25 +19,23 @@ DSH Automation Center 为 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 
 > 当前版本：`0.1.0-alpha.7`。兼容性通过不等于安全审计通过。
 
-## 从 npm 安装（推荐）
+## 从 GitHub Release 安装 Alpha.7
+
+先下载 [dsh-automation-center-0.1.0-alpha.7.tgz](https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.7/dsh-automation-center-0.1.0-alpha.7.tgz)，再从下载目录安装。
 
 Web Profile：
 
 ```sh
-dsh plugin --profile web add dsh-automation-center@latest
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.7.tgz
 ```
 
 Desktop Profile：
 
 ```sh
-dsh plugin --profile desktop add dsh-automation-center@latest
+dsh plugin --profile desktop add ./dsh-automation-center-0.1.0-alpha.7.tgz
 ```
 
-需要可复现安装时固定版本：
-
-```sh
-dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.7
-```
+Release 同时提供 [SHA-256](https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.7/dsh-automation-center-0.1.0-alpha.7.tgz.sha256)、[SPDX SBOM](https://github.com/usersx/dsh-automation-center/releases/download/v0.1.0-alpha.7/dsh-automation-center-0.1.0-alpha.7.spdx.json) 和 GitHub/Sigstore 构建证明。npm Trusted Publishing 当前因包权限返回 E404，registry 中还没有 Alpha.7；`@latest` 仍不是本次 Release。
 
 安装后完整退出并重新打开 DSH，让 Host Bundle 在启动时挂载。不要只刷新网页。Node.js 需使用 DSH 支持的 `^22.19.0` 或 `>=24.0.0`。
 
