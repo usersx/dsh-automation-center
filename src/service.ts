@@ -167,6 +167,10 @@ export class AutomationService {
     detectedRuns: 0,
     importedDefinitions: 0,
     importedRuns: 0,
+    plannedDefinitions: 0,
+    plannedRuns: 0,
+    skippedDeletedDefinitions: 0,
+    sourceFingerprint: createHash('sha256').update('[]').digest('hex'),
   }
 
   private constructor(
@@ -855,11 +859,15 @@ export class AutomationService {
     try {
       const oldDefinitions = legacy.table('definitions') as KvTable<string, LegacyDefinition>
       const oldRuns = legacy.table('runs') as KvTable<string, LegacyRun>
-      let importedDefinitions = 0
-      let importedRuns = 0
+      const definitionsToImport: Array<readonly [string, AutomationDefinition]> = []
+      const runsToImport: Array<readonly [string, AutomationRun]> = []
+      let skippedDeletedDefinitions = 0
       const defaultTimeout = Math.max(1, Math.round(this.config.runTimeoutMs / 60_000))
       for (const [id, old] of oldDefinitions.entries()) {
-        if (this.hasLegacyDeleteTombstone(id)) continue
+        if (this.hasLegacyDeleteTombstone(id)) {
+          skippedDeletedDefinitions += 1
+          continue
+        }
         const modelPolicy = old.provider !== null && old.model !== null
           ? { mode: 'pinned' as const, provider: old.provider, model: old.model }
           : { mode: 'inherit' as const }
@@ -871,8 +879,7 @@ export class AutomationService {
           }
           continue
         }
-        await this.definitions.put(id, converted)
-        importedDefinitions += 1
+        definitionsToImport.push([id, converted])
       }
       for (const [id, old] of oldRuns.entries()) {
         const modelPolicy = old.targetSnapshot.provider !== null && old.targetSnapshot.model !== null
@@ -914,14 +921,25 @@ export class AutomationService {
           }
           continue
         }
-        await this.runs.put(id, converted)
-        importedRuns += 1
+        runsToImport.push([id, converted])
       }
+      // The loops above are a dry run: every conversion and conflict is
+      // validated before the first destination write.
+      for (const [id, converted] of definitionsToImport) await this.definitions.put(id, converted)
+      for (const [id, converted] of runsToImport) await this.runs.put(id, converted)
+      const sourceFingerprint = createHash('sha256').update(JSON.stringify({
+        definitions: [...oldDefinitions.keys()].sort(),
+        runs: [...oldRuns.keys()].sort(),
+      })).digest('hex')
       return {
         detectedDefinitions: oldDefinitions.size,
         detectedRuns: oldRuns.size,
-        importedDefinitions,
-        importedRuns,
+        importedDefinitions: definitionsToImport.length,
+        importedRuns: runsToImport.length,
+        plannedDefinitions: definitionsToImport.length,
+        plannedRuns: runsToImport.length,
+        skippedDeletedDefinitions,
+        sourceFingerprint,
       }
     } finally {
       await legacy.close()

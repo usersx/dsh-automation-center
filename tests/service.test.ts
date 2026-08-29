@@ -90,6 +90,7 @@ async function harness(seed?: {
   readonly onResolveWorkspace?: () => void
   readonly legacyDefinitions?: readonly LegacyDefinition[]
   readonly legacyRuns?: readonly LegacyRun[]
+  readonly currentDomain?: MemoryDomain
 }): Promise<{
   service: AutomationService
   domain: MemoryDomain
@@ -100,7 +101,7 @@ async function harness(seed?: {
   removeSourceAgent(): void
   reopenService(): Promise<AutomationService>
 }> {
-  const domain = new MemoryDomain(seed?.definitions, seed?.runs)
+  const domain = seed?.currentDomain ?? new MemoryDomain(seed?.definitions, seed?.runs)
   const legacyDefinitions = new MemoryTable(new Map((seed?.legacyDefinitions ?? []).map(value => [value.id, value])))
   const legacyRuns = new MemoryTable(new Map((seed?.legacyRuns ?? []).map(value => [value.id, value])))
   const legacyDomain = {
@@ -358,12 +359,47 @@ test('legacy definitions and runs import once while source records remain unchan
     detectedRuns: 1,
     importedDefinitions: 1,
     importedRuns: 1,
+    plannedDefinitions: 1,
+    plannedRuns: 1,
+    skippedDeletedDefinitions: 0,
+    sourceFingerprint: snapshot.migration.sourceFingerprint,
   })
+  assert.match(snapshot.migration.sourceFingerprint ?? '', /^[a-f0-9]{64}$/)
   assert.equal(snapshot.definitions[0]?.runTimeoutMinutes, 1)
   assert.equal(snapshot.runs[0]?.targetSnapshot.runTimeoutMinutes, 1)
   assert.equal('runTimeoutMinutes' in legacyDefinition, false)
   assert.equal('runTimeoutMinutes' in legacyRun.targetSnapshot, false)
   await service.dispose()
+})
+
+test('legacy migration validates every conflict before writing any destination record', async () => {
+  const existing = storedDefinition('2026-08-13T00:00:00.000Z')
+  const existingRun = createManualRun(existing, '2026-08-13T00:01:00.000Z', 'conflict-run')
+  const currentDomain = new MemoryDomain([existing], [existingRun])
+  const pending = createDefinition({
+    ...existing,
+    id: 'automation-pending-import',
+    name: 'Pending import',
+    now: '2026-08-13T00:00:00.000Z',
+  })
+  const { runTimeoutMinutes: _pendingTimeout, ...legacyPending } = pending
+  const { runTimeoutMinutes: _targetTimeout, ...legacyTarget } = existingRun.targetSnapshot
+  const {
+    admittedAt: _admittedAt, attempt: _attempt, sequence: _sequence,
+    outcome: _outcome, attention: _attention, effect: _effect,
+    effectiveContext: _effectiveContext, phase: _phase, lease: _lease,
+    effectiveModel: _effectiveModel, ...legacyRun
+  } = existingRun
+
+  await assert.rejects(() => harness({
+    currentDomain,
+    legacyDefinitions: [legacyPending as unknown as LegacyDefinition],
+    legacyRuns: [{
+      ...legacyRun, summary: 'conflicting legacy value', targetSnapshot: legacyTarget,
+    } as unknown as LegacyRun],
+  }), /legacy migration conflict for run/)
+  assert.equal(currentDomain.definitions.get(pending.id), undefined)
+  assert.equal(currentDomain.runs.get(existingRun.id)?.summary, existingRun.summary)
 })
 
 test('a committed legacy delete remains deleted after the service reopens', async () => {

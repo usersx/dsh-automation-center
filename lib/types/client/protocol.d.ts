@@ -154,6 +154,10 @@ export interface AutomationSnapshot {
         readonly detectedRuns: number;
         readonly importedDefinitions: number;
         readonly importedRuns: number;
+        readonly plannedDefinitions?: number;
+        readonly plannedRuns?: number;
+        readonly skippedDeletedDefinitions?: number;
+        readonly sourceFingerprint?: string;
     };
     readonly serverNow: string;
 }
