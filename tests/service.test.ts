@@ -70,6 +70,10 @@ const defaults: AutomationConfig = {
 }
 const execFileAsync = promisify(execFile)
 
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n')
+}
+
 function storedDefinition(now: string): AutomationDefinition {
   return createDefinition({
     id: 'automation-existing',
@@ -1061,7 +1065,7 @@ test('worktree review isolates edits and accepts them only through the review co
     )
     assert.equal(accepted.review?.status, 'accepted')
     assert.equal(accepted.attention, 'none')
-    assert.equal(await readFile(join(repository, 'review.txt'), 'utf8'), 'reviewed\n')
+    assert.equal(normalizeLineEndings(await readFile(join(repository, 'review.txt'), 'utf8')), 'reviewed\n')
   } finally {
     await fixture.service.dispose()
   }

@@ -9,6 +9,10 @@ import { acceptGitReview, collectGitReview, discardGitReview, keepGitReview, pre
 
 const execFileAsync = promisify(execFile)
 
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n')
+}
+
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const result = await execFileAsync('git', ['-C', cwd, ...args], { encoding: 'utf8' })
   return result.stdout.trim()
@@ -38,8 +42,8 @@ test('git review isolates edits and accepts tracked plus untracked files', async
   assert.equal(kept.status, 'kept')
   const accepted = await acceptGitReview(cwd, kept)
   assert.equal(accepted.status, 'accepted')
-  assert.equal(await readFile(join(cwd, 'tracked.txt'), 'utf8'), 'after\n')
-  assert.equal(await readFile(join(cwd, 'new.txt'), 'utf8'), 'new\n')
+  assert.equal(normalizeLineEndings(await readFile(join(cwd, 'tracked.txt'), 'utf8')), 'after\n')
+  assert.equal(normalizeLineEndings(await readFile(join(cwd, 'new.txt'), 'utf8')), 'new\n')
 })
 
 test('git review discard removes isolation without changing the source', async () => {
@@ -48,7 +52,7 @@ test('git review discard removes isolation without changing the source', async (
   await writeFile(join(prepared.worktreePath, 'tracked.txt'), 'discarded\n')
   const discarded = await discardGitReview(cwd, await collectGitReview(prepared))
   assert.equal(discarded.status, 'discarded')
-  assert.equal(await readFile(join(cwd, 'tracked.txt'), 'utf8'), 'before\n')
+  assert.equal(normalizeLineEndings(await readFile(join(cwd, 'tracked.txt'), 'utf8')), 'before\n')
 })
 
 test('git review refuses source drift before acceptance', async () => {
