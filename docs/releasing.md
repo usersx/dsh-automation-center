@@ -14,7 +14,7 @@ No long-lived `NPM_TOKEN` is required or expected.
 
 1. Update `package.json`, both READMEs and `CHANGELOG.md` to the same version.
 2. Run `pnpm check` on a supported Node version.
-3. Confirm the stock DSH install matrix passes for the minimum supported tag (`dsh-v0.1.0-rc.8`) and the current latest tag (`dsh-v0.1.1-rc.2`).
+3. Confirm the stock DSH install matrix passes for the minimum supported tag (`dsh-v0.1.0-rc.8`), the last RC (`dsh-v0.1.1-rc.2`), and the current latest tag (`dsh-v0.1.2-alpha.1`).
 4. Confirm the acceptance record distinguishes automated, observed, blocked and unrun cases.
 5. Merge to `main`, then create a GitHub Release whose tag is exactly `v<package version>`.
 6. Mark Alpha/Beta/RC releases as pre-releases; stable versions are normal releases.
@@ -24,8 +24,8 @@ The workflow re-runs checks, packs one tarball, generates a checksum and SPDX JS
 ## Verification
 
 ```sh
-npm view dsh-automation-center@0.1.0-alpha.6 version dist.integrity dist.tarball
-gh release view v0.1.0-alpha.6 --repo usersx/dsh-automation-center
+npm view dsh-automation-center@0.1.0-alpha.7 version dist.integrity dist.tarball
+gh release view v0.1.0-alpha.7 --repo usersx/dsh-automation-center
 ```
 
 The fixed-version install command is the reproducible recommendation. `@latest` is a convenience alias and can change over time.

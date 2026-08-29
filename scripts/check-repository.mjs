@@ -25,8 +25,9 @@ for (const marker of ['SC-01', 'B-01', 'C-01', 'D-01', 'E-01', '一票否决项'
   }
 }
 
+const manifest = JSON.parse(await readFile('package.json', 'utf8'))
 const readme = await readFile('README.md', 'utf8')
-for (const marker of ['dsh-automation-center@latest', 'dsh-automation-center@0.1.0-alpha.6', '原版兼容模式', 'settings.section']) {
+for (const marker of ['dsh-automation-center@latest', `dsh-automation-center@${manifest.version}`, '原版兼容模式', 'settings.section']) {
   if (!readme.includes(marker)) throw new Error(`README is missing release marker: ${marker}`)
 }
 

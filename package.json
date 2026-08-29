@@ -1,6 +1,6 @@
 {
   "name": "dsh-automation-center",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "description": "A global Automation Center with fresh, auditable scheduled Agent runs for DeepSeek Harness",
   "type": "module",
   "main": "./lib/index.js",

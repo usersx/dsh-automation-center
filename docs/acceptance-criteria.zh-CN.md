@@ -4,7 +4,7 @@
 
 目标插件需要在 DSH Web 和 DSH Desktop 中提供自动化任务中心，并按 DSH 实际扩展能力选择界面：
 
-- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 至当前 `0.1.1-rc.2` 通过公开的 `settings.section` 提供全局管理页，并以 `conversation.view` 提供 Session 快捷入口；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 至当前 `0.1.2-alpha.1` 通过公开的 `settings.section` 提供全局管理页，并以 `conversation.view` 提供 Session 快捷入口；不需要 Shell Page Patch，不允许 DOM 注入或替换 Sidebar。
 - **全局中心模式**：DSH 同时提供 `sidebar.primary.action` 与 `shell.page` 时，提供完整的全局 Automation Center：
   - 入口位于左侧栏“新会话”正下方、“工作区”正上方；
   - 与“新会话”同属一级入口；
@@ -21,7 +21,7 @@
 
 | ID | 验收项 | 通过标准 |
 |---|---|---|
-| SC-01 | 无 Patch 安装 | 未修改的最低支持版 `0.1.0-rc.8` 与当前最新版 `0.1.1-rc.2` 都可以直接安装并启动，不要求用户替换 DSH 构建 |
+| SC-01 | 无 Patch 安装 | 未修改的最低支持版 `0.1.0-rc.8`、最后 RC `0.1.1-rc.2` 与当前最新版 `0.1.2-alpha.1` 都可以直接安装并启动，不要求用户替换 DSH 构建 |
 | SC-01A | 新版跟进 | DSH 发布新 RC 后，CI 增加该精确 Tag；实机结果明确区分安装/激活 smoke 与完整 Agent Run，不以前者代替后者 |
 | SC-02 | 原生扩展点 | 使用 `settings.section` 注册全局管理页、`conversation.view` 注册快捷标签，不扫描或修改 DSH DOM |
 | SC-03 | Surface 协商 | 始终注册 Settings；`ctx.layout` 提供 Shell 导航能力时再选择全局 Shell 中心，否则保留 Conversation 快捷入口 |
@@ -168,7 +168,7 @@ DeepSeek Harness
 
 | ID | 验收项 | 通过标准 |
 |---|---|---|
-| S-01 | Loopback RPC | 自动化管理 RPC 只接受可信本地连接 |
+| S-01 | 受认证 RPC | rc.8/rc.2 使用 Loopback authority；alpha.1 使用一次性 Token 通道；跨 Workspace/Profile mutation 必须拒绝 |
 | S-02 | Workspace 边界 | Web UI 只能选择已注册 Workspace |
 | S-03 | Agent 作用域 | Agent 工具只能管理自身 Workspace 的 Automation |
 | S-04 | 防递归 | Automation 创建的 Agent 不具备创建 Automation 的工具 |

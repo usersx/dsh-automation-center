@@ -14,10 +14,10 @@ DSH Automation Center 为 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 
 当前版本会按 DSH 能力选择原生界面，不注入 DOM，也不替换 Sidebar：
 
-- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 至最新 `0.1.1-rc.2` 在“设置 → 自动化”提供全局管理页，无 Session 也能进入；Session 内的“自动化”标签作为快捷入口。普通用户可直接安装，不需要 Shell Page Patch。
+- **原版兼容模式**：未修改的 DSH `0.1.0-rc.8` 至最新 `0.1.2-alpha.1` 在“设置 → 自动化”提供全局管理页，无 Session 也能进入；Session 内的“自动化”标签作为快捷入口。普通用户可直接安装，不需要 Shell Page Patch。
 - **全局中心模式**：当 DSH 提供 `sidebar.primary.action` 与 `shell.page` 时，自动升级为“新会话”下方、“工作区”上方的全局入口，无需先打开 Session。
 
-> 当前版本：`0.1.0-alpha.6`。兼容性通过不等于安全审计通过。
+> 当前版本：`0.1.0-alpha.7`。兼容性通过不等于安全审计通过。
 
 ## 从 npm 安装（推荐）
 
@@ -36,7 +36,7 @@ dsh plugin --profile desktop add dsh-automation-center@latest
 需要可复现安装时固定版本：
 
 ```sh
-dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.6
+dsh plugin --profile web add dsh-automation-center@0.1.0-alpha.7
 ```
 
 安装后完整退出并重新打开 DSH，让 Host Bundle 在启动时挂载。不要只刷新网页。Node.js 需使用 DSH 支持的 `^22.19.0` 或 `>=24.0.0`。
@@ -65,6 +65,9 @@ Automation 不属于某个聊天 Session。`alpha.6` 因此把原版 DSH 的权�
 - 保存与运行前检查 Workspace、Preset 和模型；不可用目标显示为 `blocked`，不会先创建无效 Session。
 - 创建幂等、防重叠、确定性 occurrence 领取、有限 misfire 补偿与保守的 Host 重启恢复。
 - `claim / setup / executing / settling / delivery` 阶段、租约心跳与覆盖完整作业的超时。
+- 派生 expected/admitted/claimed/queue/progress 健康，以及结构化 Outcome/Attention、attempt 与副作用不确定性。
+- 可选 Git worktree 隔离审阅：干净 base、patch hash/stat、accept/keep/discard，源工作区漂移时 fail closed。
+- 生命周期事件带 runId/revision/sequence；模型只看到无人值守策略实际允许的工具。
 - 所有写操作返回持久 Receipt（request ID、revision、`committed / rejected / unknown`），Client 随后读取权威状态。
 - 持久运行历史、摘要、Result Session 入口、实际模型和结构化错误码。
 - 只读导入旧 `dsh_automation` v1 数据，原存储域保持不变。
@@ -111,7 +114,7 @@ Automation 不属于某个聊天 Session。`alpha.6` 因此把原版 DSH 的权�
 
 ```text
 DSH Surface Adapter
-  ├─ stock 0.1.0-rc.8 + 0.1.1-rc.2: settings.section + conversation.view shortcut
+  ├─ stock 0.1.0-rc.8 → 0.1.2-alpha.1: settings.section + conversation.view shortcut
   └─ enhanced: sidebar.primary.action + shell.page
                          │
                          ▼
@@ -126,7 +129,7 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run
                           Result Session + 审计记录
 ```
 
-复杂度集中在 Host 侧 `AutomationEngine`。两个 Client Surface Adapter、Loopback RPC、Scheduler 和 Agent Tools 都复用同一个 `snapshot` / `dispatch` 边界，不直接读写存储域。
+复杂度集中在 Host 侧 `AutomationEngine`。两个 Client Surface Adapter、受认证 RPC、Scheduler 和 Agent Tools 都复用同一个 `snapshot` / `dispatch` 边界，不直接读写存储域。
 
 ## 兼容性
 
@@ -134,13 +137,14 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run
 |---|---|---|---|
 | 原版 DSH `0.1.0-rc.8` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.6 完整 Web 端到端通过 |
 | 原版 DSH `0.1.1-rc.2` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | npm 固定版本安装、Host/Client 激活、无 Workspace 空状态和浏览器 console 验收通过；完整 Agent Run 未重复执行 |
+| 原版 DSH `0.1.2-alpha.1` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.7 本地 tarball 安装、Host/Client、创建/运行、失败终态、Result Session 与 Attention readback 通过；真实模型成功 Run 待最终验收 |
 | macOS DSH Desktop `2.0.1` | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.6 真实模型端到端与三次冷启动通过；不等同于 rc.2 Desktop 验收 |
 | 提供两个 Shell Slot 的 DSH / Web | 无需插件改动 | 全局根入口和独立页面 | 已观察通过 |
 | Windows / Linux 原生 Desktop | — | 随目标 DSH 能力自动选择 | 尚未实机验收 |
 
-截至 `0.1.1-rc.2`，原版 DSH 仍没有 `sidebar.primary.action` 和 `shell.page`，所以插件无法只靠公开 API 在“新会话”下方增加根入口。为了保证可卸载、可维护和主题兼容，本项目不使用 DOM 注入模拟该入口。两个 Slot 一旦进入 DSH 上游，同一个 npm 包会自动启用全局中心模式。
+截至 `0.1.2-alpha.1`，原版 DSH 仍没有 `sidebar.primary.action` 和 `shell.page`，所以插件无法只靠公开 API 在“新会话”下方增加根入口。为了保证可卸载、可维护和主题兼容，本项目不使用 DOM 注入模拟该入口。两个 Slot 一旦进入 DSH 上游，同一个 npm 包会自动启用全局中心模式。
 
-精确的通过、阻塞和未运行项见 [Alpha.6 验收结果](docs/acceptance-results-2026-08-23-alpha.6.md)；Alpha.5 实机基线保留在[上一版记录](docs/acceptance-results-2026-08-20.md)。
+精确的通过、阻塞和未运行项见 [Alpha.7 验收结果](docs/acceptance-results-2026-08-30-alpha.7.md)；Alpha.6 与 Alpha.5 历史记录仍保留作为既有实机基线。
 
 ## 配置
 
@@ -154,7 +158,7 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run
 
 ## 安全边界
 
-- 管理 RPC 只接受可信 Loopback 连接。
+- 管理 RPC 在 rc.8/rc.2 使用 Loopback authority，在 alpha.1 使用一次性 Token 认证通道；所有写入仍校验 Workspace/Profile scope。
 - UI 只能提交已注册的 Workspace ID，不能传任意宿主绝对路径。
 - Automation Agent 不能递归创建 Automation，也不能等待人工授权。
 - 无人值守工具使用白名单，并拒绝后台进程逃逸。
@@ -169,12 +173,12 @@ pnpm install
 pnpm check
 ```
 
-CI 在 Linux、macOS 和 Windows 上执行类型检查、测试、构建与仓库检查，并把打包后的插件分别安装到未修改的 DSH `0.1.0-rc.8` 与 `0.1.1-rc.2` 隔离 Profile。Alpha.6 Release 已提供固定 tarball、SHA-256、SPDX SBOM 与 GitHub/Sigstore 制品证明；npm 固定版本已发布。本次首次 npm 发布由已登录 CLI 完成，因此不把它误报为 npm provenance。
+CI 在 Linux、macOS 和 Windows 上执行类型检查、测试、构建与仓库检查，并把打包后的插件分别安装到未修改的 DSH `0.1.0-rc.8`、`0.1.1-rc.2` 与 `0.1.2-alpha.1` 隔离 Profile。Release workflow 会生成固定 tarball、SHA-256、SPDX SBOM 与 GitHub/Sigstore 制品证明；npm 发布只在 workflow 与 registry 回读成功后才算完成。
 
 ## 文档
 
 - [验收标准](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-criteria.zh-CN.md)
-- [Alpha.6 验收结果（含 rc.2 复验）](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-23-alpha.6.md)
+- [Alpha.7 验收结果](https://github.com/usersx/dsh-automation-center/blob/main/docs/acceptance-results-2026-08-30-alpha.7.md)
 - [技术方案](https://github.com/usersx/dsh-automation-center/blob/main/docs/technical-design.zh-CN.md)
 - [发布流程](https://github.com/usersx/dsh-automation-center/blob/main/docs/releasing.md)
 - [更新日志](CHANGELOG.md)
@@ -191,13 +195,13 @@ cd dsh-automation-center
 pnpm install
 pnpm check
 npm pack
-dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.6.tgz
+dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.7.tgz
 ```
 
 ## 已知限制
 
-- 原版 DSH `0.1.1-rc.2` 可在 Settings 提供全局管理页，但左侧栏一级入口仍需要上游提供两个通用 Shell Slot。
-- `0.1.1-rc.2` Web 已完成安装与激活 smoke；rc.2 Desktop 和 rc.2 真实模型完整 Run 尚未实机验收。
+- 原版 DSH `0.1.2-alpha.1` 可在 Settings 提供全局管理页，但左侧栏一级入口仍需要上游提供两个通用 Shell Slot。
+- `0.1.2-alpha.1` Web 已完成 Alpha.7 本地制品的安装、激活、RPC 与失败链路验收；真实模型成功 Run 与 Desktop 以 Alpha.7 验收记录为准。
 - 第一版不提供分布式 Scheduler、远程执行节点或云端凭证托管。
 - 取消不会撤销已经发生的文件修改或外部调用。
 - 当前仍是 Alpha；稳定版发布条件以验收文档为准。

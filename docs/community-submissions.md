@@ -7,7 +7,7 @@ This file prepares the ecosystem submissions without claiming they have already 
 - Name: DSH Automation Center
 - Package: `dsh-automation-center`
 - Repository: `https://github.com/usersx/dsh-automation-center`
-- Summary: Scheduled, auditable DeepSeek Harness Agent runs with fresh Result Sessions; works on stock DSH 0.1.0-rc.8 through 0.1.1-rc.2 and automatically enables a global center when Shell slots are available.
+- Summary: Scheduled, auditable DeepSeek Harness Agent runs with fresh Result Sessions; works on stock DSH 0.1.0-rc.8 through 0.1.2-alpha.1 and automatically enables a global center when Shell slots are available.
 - License: MIT
 - Install: `dsh plugin --profile web add dsh-automation-center@latest`
 - Evidence: CI, acceptance record, fixed npm version, SBOM and GitHub/Sigstore build-attestation links. Add an npm provenance link only after it is observed on the registry.
@@ -17,7 +17,7 @@ This file prepares the ecosystem submissions without claiming they have already 
 Proposed entry:
 
 ```md
-- [DSH Automation Center](https://github.com/usersx/dsh-automation-center) - Scheduled, auditable Agent runs with fresh Result Sessions; supports stock DSH 0.1.0-rc.8 through 0.1.1-rc.2 and an enhanced global-center surface. ([npm](https://www.npmjs.com/package/dsh-automation-center))
+- [DSH Automation Center](https://github.com/usersx/dsh-automation-center) - Scheduled, auditable Agent runs with fresh Result Sessions; supports stock DSH 0.1.0-rc.8 through 0.1.2-alpha.1 and an enhanced global-center surface. ([npm](https://www.npmjs.com/package/dsh-automation-center))
 ```
 
 Before submitting either entry, publish the version referenced by README, confirm the public CI run is green, and replace any pending acceptance statement with the exact observed result.
