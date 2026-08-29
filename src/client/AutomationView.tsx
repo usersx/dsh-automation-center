@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { AutomationViewProps, Translate } from './contracts.js'
 import {
   AutomationFormError,
@@ -573,6 +573,7 @@ export function AutomationView({
   const [actionError, setActionError] = useState<string>()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string>()
   const [workspaceFilter, setWorkspaceFilter] = useState('')
+  const notifiedRunIds = useRef(new Set<string>())
 
   useEffect(() => {
     void refresh().catch(() => undefined)
@@ -581,6 +582,19 @@ export function AutomationView({
   }, [refresh])
 
   const snapshot = state.snapshot
+  useEffect(() => {
+    if (snapshot === undefined || typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+    for (const run of snapshot.runs) {
+      if (run.unread === false || run.attention === undefined || run.attention === 'none'
+        || notifiedRunIds.current.has(run.id)) continue
+      notifiedRunIds.current.add(run.id)
+      const notification = new Notification(t('notification.title'), {
+        body: t('notification.body', { name: run.automationName }),
+        tag: `dsh-automation:${run.id}`,
+      })
+      notification.onclick = () => { window.focus() }
+    }
+  }, [snapshot, t])
   const editingAutomation = useMemo(
     () => snapshot?.automations.find(item => String(item.id) === editingAutomationId),
     [editingAutomationId, snapshot],

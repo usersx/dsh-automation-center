@@ -16,6 +16,8 @@ export declare const en: {
     readonly 'stats.attention': "Needs attention";
     readonly 'stats.noneScheduled': "Not scheduled";
     readonly 'stats.noAttention': "All clear";
+    readonly 'notification.title': "Automation needs attention";
+    readonly 'notification.body': "{name} has a result to review.";
     readonly 'section.automations': "Workspace automations";
     readonly 'section.automationsHint': "Each trigger opens a fresh DSH session with its own audit trail.";
     readonly 'section.runs': "Recent runs";

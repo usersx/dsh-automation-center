@@ -90,6 +90,13 @@ test('buildCreateInput rejects empty weekly days and unsafe intervals', () => {
     () => buildCreateInput({ ...base, scheduleKind: 'interval', everyMinutes: '1' }),
     (error: unknown) => error instanceof AutomationFormError && error.key === 'form.error.interval',
   )
+  assert.throws(
+    () => buildCreateInput({ ...base, reviewMode: 'worktree', permission: 'read-only' }),
+    (error: unknown) => error instanceof AutomationFormError && error.key === 'form.error.review',
+  )
+  assert.equal(buildCreateInput({
+    ...base, reviewMode: 'worktree', permission: 'workspace-write',
+  }).reviewMode, 'worktree')
 })
 
 test('editing starts from the complete stored prompt and preserves interval cadence', () => {
