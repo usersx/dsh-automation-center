@@ -10,6 +10,10 @@ export type AutomationRunStatus =
   | 'skipped'
   | 'cancelled'
   | 'interrupted'
+export type AutomationOutcome =
+  | 'pending' | 'unknown' | 'no_change' | 'changes_ready' | 'needs_input' | 'succeeded'
+  | 'failed' | 'blocked' | 'cancelled' | 'interrupted' | 'skipped' | 'partial'
+export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown'
 
 export type AutomationPermission = 'read-only' | 'workspace-write'
 export type AutomationModelPolicy =
@@ -69,6 +73,14 @@ export interface AutomationRunViewModel {
   readonly automationId: string
   readonly automationName: string
   readonly status: AutomationRunStatus
+  readonly attempt?: number
+  readonly outcome?: AutomationOutcome
+  readonly attention?: AutomationAttention
+  readonly effect?: {
+    readonly status: 'none' | 'possible' | 'completed' | 'unknown'
+    readonly updatedAt: string
+    readonly externalId?: string
+  }
   readonly phase?: 'claim' | 'setup' | 'executing' | 'settling' | 'delivery'
   readonly heartbeatAt?: string
   readonly leaseExpiresAt?: string

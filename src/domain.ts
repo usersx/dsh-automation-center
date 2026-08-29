@@ -102,6 +102,11 @@ export const automationDefinitionSchema: z.ZodType<AutomationDefinition> = z.pre
 ) as z.ZodType<AutomationDefinition>
 
 const runPhase = z.enum(['claim', 'setup', 'executing', 'settling', 'delivery'])
+const runOutcome = z.enum([
+  'pending', 'unknown', 'no_change', 'changes_ready', 'needs_input', 'succeeded',
+  'failed', 'blocked', 'cancelled', 'interrupted', 'skipped', 'partial',
+])
+const runAttention = z.enum(['none', 'review', 'needs_input', 'failed', 'blocked', 'unknown'])
 const automationRunShape = z.object({
   version: z.literal(1),
   id: nonBlank,
@@ -111,6 +116,7 @@ const automationRunShape = z.object({
   trigger: z.enum(['schedule', 'manual']),
   scheduledFor: instant,
   admittedAt: instant,
+  attempt: z.number().int().positive(),
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled', 'interrupted']),
   phase: runPhase.nullable(),
   lease: z.object({
@@ -127,6 +133,13 @@ const automationRunShape = z.object({
   finishedAt: instant.nullable(),
   summary: z.string().nullable(),
   error: z.object({ code: nonBlank, message: nonBlank }).nullable(),
+  outcome: runOutcome,
+  attention: runAttention,
+  effect: z.object({
+    status: z.enum(['none', 'possible', 'completed', 'unknown']),
+    updatedAt: instant,
+    externalId: nonBlank.optional(),
+  }),
   unread: z.boolean(),
   effectiveModel: z.object({
     provider: nonBlank,
@@ -139,12 +152,36 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw
   const record = raw as Record<string, unknown>
   const status = record.status
+  const outcome = record.outcome ?? (
+    status === 'queued' || status === 'running' ? 'pending'
+      : status === 'succeeded' ? 'succeeded'
+        : status === 'failed' ? 'failed'
+          : status === 'cancelled' ? 'cancelled'
+            : status === 'interrupted' ? 'interrupted'
+              : status === 'skipped' ? 'skipped'
+                : 'unknown'
+  )
   return {
     ...record,
     admittedAt: record.admittedAt ?? record.scheduledFor,
+    attempt: record.attempt ?? 1,
     phase: record.phase ?? (status === 'queued' ? 'claim' : status === 'running' ? 'executing' : null),
     lease: record.lease ?? null,
     effectiveModel: record.effectiveModel ?? null,
+    outcome,
+    attention: record.attention ?? (
+      outcome === 'failed' || outcome === 'interrupted' ? 'failed'
+        : outcome === 'blocked' ? 'blocked'
+          : outcome === 'needs_input' ? 'needs_input'
+            : outcome === 'unknown' || outcome === 'partial' ? 'unknown'
+              : 'none'
+    ),
+    effect: record.effect ?? {
+      status: (record.lease as { sideEffectsPossible?: unknown } | null | undefined)?.sideEffectsPossible === true
+        ? 'possible'
+        : 'none',
+      updatedAt: record.finishedAt ?? record.startedAt ?? record.admittedAt ?? record.scheduledFor,
+    },
   }
 }, automationRunShape) as z.ZodType<AutomationRun>
 
@@ -304,6 +341,7 @@ function queuedRun(
     trigger,
     scheduledFor,
     admittedAt: scheduledFor,
+    attempt: 1,
     status: 'queued',
     phase: 'claim',
     lease: null,
@@ -323,6 +361,9 @@ function queuedRun(
     finishedAt: null,
     summary: null,
     error: null,
+    outcome: 'pending',
+    attention: 'none',
+    effect: { status: 'none', updatedAt: scheduledFor },
     unread: true,
     effectiveModel: null,
   })

@@ -457,9 +457,12 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
   onCancel: (runId: string) => void
 }): JSX.Element {
   const timestamp = run.finishedAt ?? run.startedAt ?? run.scheduledFor
-  const canMarkRead = run.unread !== false
-    && (run.status === 'failed' || run.status === 'interrupted'
-      || run.status === 'skipped' || run.status === 'cancelled')
+  const canMarkRead = run.unread !== false && (
+    run.attention === undefined
+      ? (run.status === 'failed' || run.status === 'interrupted'
+        || run.status === 'skipped' || run.status === 'cancelled')
+      : run.attention !== 'none'
+  )
   return (
     <article className="dsh-automation-run">
       <div className="dsh-automation-run-head">
@@ -470,6 +473,15 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
         <time dateTime={timestamp}>{formatRelativeTime(timestamp, now, t)}</time>
       </div>
       <RunStatusBadge status={run.status} t={t} />
+      {run.outcome !== undefined && (
+        <span className="dsh-automation-run-phase">{t(`outcome.${run.outcome}`)}</span>
+      )}
+      {run.attempt !== undefined && run.attempt > 1 && (
+        <span className="dsh-automation-run-model">{t('run.attempt', { count: run.attempt })}</span>
+      )}
+      {run.effect?.status === 'unknown' && (
+        <span className="dsh-automation-run-model">{t('run.effectUnknown')}</span>
+      )}
       {run.phase !== undefined && (
         <span className="dsh-automation-run-phase">{t(`phase.${run.phase}`)}</span>
       )}

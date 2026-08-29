@@ -180,12 +180,17 @@ test('deriveOverview counts active definitions and unread failures', () => {
       { id: 'r1', automationId: 'a1', automationName: 'A', status: 'failed', trigger: 'schedule', scheduledFor: '2026-08-12T09:00:00.000Z', sessionArchived: false },
       { id: 'r2', automationId: 'a1', automationName: 'A', status: 'failed', trigger: 'schedule', scheduledFor: '2026-08-11T09:00:00.000Z', sessionArchived: false, unread: false },
       { id: 'r3', automationId: 'a2', automationName: 'B', status: 'succeeded', trigger: 'manual', scheduledFor: '2026-08-12T10:00:00.000Z', sessionArchived: false },
+      {
+        id: 'r4', automationId: 'a2', automationName: 'B', status: 'succeeded',
+        outcome: 'changes_ready', attention: 'review', unread: true,
+        trigger: 'manual', scheduledFor: '2026-08-12T11:00:00.000Z', sessionArchived: false,
+      },
     ],
   }
   assert.deepEqual(deriveOverview(snapshot), {
     total: 2,
     active: 1,
-    attention: 1,
+    attention: 2,
     nextRunAt: '2026-08-13T09:00:00.000Z',
   })
 })

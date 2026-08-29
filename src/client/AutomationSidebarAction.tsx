@@ -10,8 +10,11 @@ export function AutomationSidebarAction({
 }: AutomationSidebarActionProps): JSX.Element {
   const state = useAutomationState(value => value)
   const active = useShellSurface(surface => surface.kind === 'page' && surface.pageId === 'automation')
-  const attention = state.snapshot?.runs.filter(run => run.unread !== false
-    && (run.status === 'failed' || run.status === 'interrupted' || run.status === 'skipped')).length ?? 0
+  const attention = state.snapshot?.runs.filter(run => run.unread !== false && (
+    run.attention === undefined
+      ? (run.status === 'failed' || run.status === 'interrupted' || run.status === 'skipped')
+      : run.attention !== 'none'
+  )).length ?? 0
 
   useEffect(() => {
     void refresh().catch(() => undefined)

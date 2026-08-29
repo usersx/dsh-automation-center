@@ -182,7 +182,7 @@ async function harness(seed?: {
       withoutInitiator: (task: () => unknown) => task(),
       create: async (input: { setup: (ctx: unknown) => Promise<void> }) => {
         if (!seed?.completeRuns) throw new Error('executor is not expected in service unit tests')
-        await input.setup({ agent: runAgent, tools: { guard: () => {} } })
+        await input.setup({ agent: runAgent, tools: { guard: () => {}, register: () => () => {} } })
         return { agent: runAgent, dispose: async () => {} }
       },
     },
@@ -827,6 +827,32 @@ test('opening after a host stop preserves queued work that never crossed the sid
   assert.equal(domain.closed, true)
 })
 
+test('startup recovery retries a pre-side-effect run as a new bounded attempt', async () => {
+  const definition = storedDefinition('2026-08-13T00:00:00Z')
+  const interrupted: AutomationRun = {
+    ...createManualRun(definition, '2026-08-13T00:05:00Z', 'safe-retry'),
+    status: 'running',
+    phase: 'setup',
+    lease: {
+      ownerId: 'dead-host', acquiredAt: '2026-08-13T00:05:10Z',
+      heartbeatAt: '2026-08-13T00:05:20Z', expiresAt: '2026-08-13T00:05:50Z',
+      sideEffectsPossible: false,
+    },
+    startedAt: '2026-08-13T00:05:10Z',
+  }
+  const { service, domain } = await harness({ definitions: [definition], runs: [interrupted] })
+  try {
+    const recovered = domain.runs.get(interrupted.id)!
+    assert.equal(recovered.status, 'queued')
+    assert.equal(recovered.attempt, 2)
+    assert.equal(recovered.outcome, 'pending')
+    assert.equal(recovered.attention, 'none')
+    assert.equal(recovered.effect.status, 'none')
+  } finally {
+    await service.dispose()
+  }
+})
+
 test('startup recovery archives a run that may have produced side effects and marks it interrupted', async () => {
   const definition = storedDefinition('2026-08-13T00:00:00Z')
   const interrupted: AutomationRun = {
@@ -851,6 +877,9 @@ test('startup recovery archives a run that may have produced side effects and ma
   try {
     assert.equal(domain.runs.get(interrupted.id)?.status, 'interrupted')
     assert.equal(domain.runs.get(interrupted.id)?.error?.code, 'host_interrupted')
+    assert.equal(domain.runs.get(interrupted.id)?.outcome, 'interrupted')
+    assert.equal(domain.runs.get(interrupted.id)?.attention, 'unknown')
+    assert.equal(domain.runs.get(interrupted.id)?.effect.status, 'unknown')
     assert.deepEqual(archivedSessionIds, [interrupted.sessionId])
   } finally {
     await service.dispose()
@@ -880,6 +909,9 @@ test('supervisor persists every execution phase and clears its lease at terminal
     assert.equal(writes.some(run => run.lease?.sideEffectsPossible === true), true)
     assert.equal(domain.runs.get(queued.id)?.phase, null)
     assert.equal(domain.runs.get(queued.id)?.lease, null)
+    assert.equal(domain.runs.get(queued.id)?.outcome, 'unknown')
+    assert.equal(domain.runs.get(queued.id)?.attention, 'unknown')
+    assert.equal(domain.runs.get(queued.id)?.effect.status, 'completed')
   } finally {
     await service.dispose()
   }

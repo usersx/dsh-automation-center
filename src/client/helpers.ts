@@ -289,7 +289,11 @@ export function deriveOverview(snapshot: AutomationSnapshot): OverviewStats {
   return {
     total: snapshot.automations.length,
     active: snapshot.automations.filter(item => item.status === 'active').length,
-    attention: snapshot.runs.filter(run => ATTENTION_STATUSES.has(run.status) && run.unread !== false).length,
+    attention: snapshot.runs.filter(run => run.unread !== false && (
+      run.attention === undefined
+        ? ATTENTION_STATUSES.has(run.status)
+        : run.attention !== 'none'
+    )).length,
     ...(next === undefined ? {} : { nextRunAt: next }),
   }
 }

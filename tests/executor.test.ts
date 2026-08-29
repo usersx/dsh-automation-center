@@ -23,6 +23,8 @@ class TrackingAbortSignal {
 
 function executorFixture(options: {
   readonly hangUntilCancelled?: boolean
+  readonly ignoreCancel?: boolean
+  readonly reportOutcome?: 'no_change' | 'changes_ready' | 'needs_input' | 'blocked' | 'partial' | 'succeeded'
   readonly modelPolicy?: { readonly mode: 'inherit' } | {
     readonly mode: 'pinned'; readonly provider: string; readonly model: string; readonly reasoningEffort?: string
   }
@@ -46,17 +48,24 @@ function executorFixture(options: {
   const lifecycle: string[] = []
   let settleIdle = () => {}
   const hangingIdle = new Promise<void>(resolve => { settleIdle = resolve })
+  let outcomeTool: { execute(args: { outcome: string }, exec: unknown): Promise<unknown> } | undefined
+  let outcomePromise = Promise.resolve()
   const session = { seq: 0, events: [] as Array<{ seq: number; type: string; data: Record<string, unknown> }> }
   const agent = {
     session,
     whenIdle: () => {
-      if (!followedUp || !options.hangUntilCancelled || cancelled) return Promise.resolve()
+      if (!followedUp) return Promise.resolve()
+      if (options.reportOutcome !== undefined) return outcomePromise
+      if (!options.hangUntilCancelled || (cancelled && !options.ignoreCancel)) return Promise.resolve()
       return hangingIdle
     },
     followup: () => {
       lifecycle.push('followup')
       followedUp = true
       if (options.hangUntilCancelled) return
+      if (options.reportOutcome !== undefined && outcomeTool !== undefined) {
+        outcomePromise = outcomeTool.execute({ outcome: options.reportOutcome }, { agent }).then(() => {})
+      }
       session.events.push(
         { seq: 0, type: 'turn/start', data: {} },
         { seq: 1, type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'done' }] } } },
@@ -66,7 +75,7 @@ function executorFixture(options: {
     },
     cancel: () => {
       cancelled = true
-      settleIdle()
+      if (!options.ignoreCancel) settleIdle()
     },
   }
   const workspace = {
@@ -81,7 +90,16 @@ function executorFixture(options: {
     agents: {
       withoutInitiator: (operation: () => unknown) => operation(),
       create: async (input: { setup: (ctx: unknown) => Promise<void> }) => {
-        await input.setup({ agent, tools: { guard: () => {} } })
+        await input.setup({
+          agent,
+          tools: {
+            guard: () => {},
+            register: (definition: unknown) => {
+              outcomeTool = definition as typeof outcomeTool
+              return () => {}
+            },
+          },
+        })
         return { agent, dispose: async () => {} }
       },
     },
@@ -115,6 +133,7 @@ test('unattended tool guard preserves foreground coding and read tools', () => {
   assert.equal(unattendedToolGuardReason('edit', { path: 'README.md' }), undefined)
   assert.equal(unattendedToolGuardReason('bash', { command: 'pnpm test' }), undefined)
   assert.equal(unattendedToolGuardReason('web_search', { query: 'package docs' }), undefined)
+  assert.equal(unattendedToolGuardReason('automation_report_outcome', { outcome: 'no_change' }), undefined)
   assert.match(unattendedToolGuardReason('third_party_side_effect', {}) ?? '', /allowlist/)
 })
 
@@ -133,6 +152,22 @@ test('executor removes its abort listener after a normally completed run', async
   assert.equal(signal.added, 1)
   assert.equal(signal.removed, 1)
   assert.equal(signal.listeners.size, 0)
+  assert.equal(completion.outcome, 'unknown')
+  assert.equal(completion.attention, 'unknown')
+})
+
+test('executor persists an explicit machine-readable outcome without parsing prose', async () => {
+  const fixture = executorFixture({ reportOutcome: 'no_change' })
+  const completion = await executeAutomationRun(
+    fixture.ctx as never,
+    fixture.definition,
+    fixture.run,
+    { runTimeoutMs: 1_000, sessionId: 'dsh-automation-session-outcome' },
+  )
+
+  assert.equal(completion.status, 'succeeded')
+  assert.equal(completion.outcome, 'no_change')
+  assert.equal(completion.attention, 'none')
 })
 
 test('executor honors a complete pinned model policy instead of the live default', async () => {
@@ -189,6 +224,29 @@ test('executor timeout cancels a stuck Agent, settles, and removes its abort lis
   assert.equal(signal.added, 1)
   assert.equal(signal.removed, 1)
   assert.equal(signal.listeners.size, 0)
+})
+
+test('executor bounds teardown when a cancelled Agent never becomes idle', async () => {
+  const fixture = executorFixture({ hangUntilCancelled: true, ignoreCancel: true })
+  const completion = await Promise.race([
+    executeAutomationRun(
+      fixture.ctx as never,
+      fixture.definition,
+      fixture.run,
+      {
+        runTimeoutMs: 5, teardownGraceMs: 5,
+        sessionId: 'dsh-automation-session-noncooperative-timeout',
+      },
+    ),
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error('non-cooperative teardown escaped its budget')), 250)
+    }),
+  ])
+
+  assert.equal(completion.status, 'failed')
+  assert.equal(completion.error?.code, 'run_timeout')
+  assert.equal(completion.cleanupIncomplete, true)
+  assert.equal(fixture.wasCancelled(), true)
 })
 
 test('executor preserves a whole-job timeout that fires before Agent setup', async () => {

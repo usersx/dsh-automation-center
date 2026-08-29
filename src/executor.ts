@@ -9,8 +9,10 @@ import { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
-import type { AutomationDefinition, AutomationRun, AutomationRunPhase } from './types.ts'
+import { defineTool, type JsonValue, type ToolExecution } from '@deepseek-ai/dsh-tools'
+import type {
+  AutomationAttention, AutomationDefinition, AutomationOutcome, AutomationRun, AutomationRunPhase,
+} from './types.ts'
 
 interface TextBlock { readonly type: string; readonly text?: string }
 interface SessionEventLike {
@@ -20,6 +22,7 @@ interface SessionEventLike {
 }
 
 const UNATTENDED_TOOL_ALLOWLIST = new Set([
+  'automation_report_outcome',
   'run_code',
   'bash', 'pwsh',
   'read', 'read_image', 'write', 'edit', 'str_replace_editor',
@@ -51,13 +54,32 @@ export interface RunCompletion {
     readonly model: string
     readonly reasoningEffort?: string
   }
+  readonly outcome?: AutomationOutcome
+  readonly attention?: AutomationAttention
+  readonly cleanupIncomplete?: boolean
 }
 
 export interface ExecutorConfig {
   readonly runTimeoutMs: number
   readonly sessionId: string
   readonly signal?: AbortSignal
+  readonly teardownGraceMs?: number
   readonly onPhase?: (phase: Extract<AutomationRunPhase, 'executing' | 'settling'>, sideEffectsPossible: true) => Promise<void>
+}
+
+async function settleWithin(task: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      task.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), Math.max(1, timeoutMs))
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 function abortCode(signal?: AbortSignal): string | undefined {
@@ -108,6 +130,35 @@ function boundSummary(value: string): string | undefined {
   if (normalized === '') return undefined
   return normalized.length <= 2_000 ? normalized : `${normalized.slice(0, 1_999)}…`
 }
+
+function outcomeAttention(outcome: AutomationOutcome): AutomationAttention {
+  switch (outcome) {
+    case 'no_change':
+    case 'succeeded':
+      return 'none'
+    case 'changes_ready':
+    case 'partial':
+      return 'review'
+    case 'needs_input':
+      return 'needs_input'
+    case 'blocked':
+      return 'blocked'
+    case 'failed':
+    case 'interrupted':
+      return 'failed'
+    case 'unknown':
+      return 'unknown'
+    case 'pending':
+    case 'cancelled':
+    case 'skipped':
+      return 'review'
+  }
+}
+
+const OUTCOME_TOOL_OUTPUT = {
+  schema: { type: 'json' },
+  render: (_args: unknown, value: JsonValue) => [{ type: 'text' as const, text: JSON.stringify(value) }],
+} as const
 
 function reasonError(reason: Record<string, any> | undefined): { readonly code: string; readonly message: string } {
   if (reason === undefined) return { code: 'no_turn_result', message: 'The automation produced no closed turn.' }
@@ -172,6 +223,9 @@ export async function executeAutomationRun(
   let handle: Awaited<ReturnType<Context['agents']['create']>> | undefined
   let timeout: ReturnType<typeof setTimeout> | undefined
   let removeCancellationListener = () => {}
+  let reportedOutcome: AutomationOutcome | undefined
+  let cleanupIncomplete = false
+  const teardownGraceMs = config.teardownGraceMs ?? Math.min(5_000, Math.max(100, config.runTimeoutMs))
   try {
     handle = await ctx.agents.withoutInitiator(() => ctx.agents.create({
       sessionId,
@@ -186,6 +240,25 @@ export async function executeAutomationRun(
         setSandboxMode(agent.session, target.permissionPreset)
         setApprovalPolicy(agent.session, 'never')
         agentCtx.tools.guard((exec: ToolExecution) => unattendedToolGuardReason(exec.name, exec.arguments))
+        agentCtx.tools.register(defineTool({
+          name: 'automation_report_outcome',
+          description: 'Report the structured outcome of this automation exactly once before the final response. Use no_change when no action is needed, changes_ready when changes or artifacts need review, needs_input when a person must answer, blocked when the task cannot proceed, partial for an incomplete but useful result, or succeeded for a completed informational task.',
+          parameters: {
+            outcome: {
+              type: 'string', required: true,
+              enum: ['no_change', 'changes_ready', 'needs_input', 'blocked', 'partial', 'succeeded'],
+            },
+          },
+          output: OUTCOME_TOOL_OUTPUT,
+          async execute(args: { readonly outcome: AutomationOutcome }) {
+            if (reportedOutcome !== undefined) {
+              return { ok: false, code: 'outcome_already_reported' } as unknown as JsonValue
+            }
+            reportedOutcome = args.outcome
+            return { ok: true, outcome: args.outcome } as unknown as JsonValue
+          },
+          presentCall: () => ({ card: 'generic' as const, title: 'Report automation outcome', kind: 'read' as const }),
+        }))
       },
     }))
     await handle.agent.whenIdle()
@@ -197,7 +270,10 @@ export async function executeAutomationRun(
     const firstSeq = handle.agent.session.seq
     await config.onPhase?.('executing', true)
     handle.agent.followup(createUserMessage({
-      content: [{ type: 'text', text: run.promptSnapshot }],
+      content: [{
+        type: 'text',
+        text: `${run.promptSnapshot}\n\nBefore your final response, call automation_report_outcome exactly once with the structured result. Do not infer this value from prose after the run.`,
+      }],
       source: {
         kind: 'automation',
         automationId: definition.id,
@@ -233,9 +309,11 @@ export async function executeAutomationRun(
     await Promise.race([idle, deadline, cancellation])
     await config.onPhase?.('settling', true)
     removeCancellationListener()
-    if (timedOut || aborted) await handle.agent.whenIdle()
+    if (timedOut || aborted) {
+      cleanupIncomplete = !await settleWithin(handle.agent.whenIdle(), teardownGraceMs)
+    }
     if (timeout !== undefined) clearTimeout(timeout)
-    await ctx.sessions.flush(handle.agent.session)
+    if (!cleanupIncomplete) await ctx.sessions.flush(handle.agent.session)
     const outcome = summarizeRun(handle.agent.session.events, firstSeq)
     const summary = boundSummary(outcome.text)
     if (aborted) {
@@ -245,6 +323,7 @@ export async function executeAutomationRun(
         effectiveModel,
         ...(summary === undefined ? {} : { summary }),
         error: { code: 'cancelled', message: 'The automation was cancelled because its owner stopped.' },
+        ...(cleanupIncomplete ? { cleanupIncomplete: true } : {}),
       }
     }
     if (timedOut) {
@@ -254,10 +333,16 @@ export async function executeAutomationRun(
         effectiveModel,
         ...(summary === undefined ? {} : { summary }),
         error: { code: 'run_timeout', message: 'The automation exceeded its run time limit.' },
+        ...(cleanupIncomplete ? { cleanupIncomplete: true } : {}),
       }
     }
     if (outcome.reason?.kind === 'completed') {
-      return { sessionId: String(sessionId), status: 'succeeded', effectiveModel, ...(summary === undefined ? {} : { summary }) }
+      const structuredOutcome = reportedOutcome ?? 'unknown'
+      return {
+        sessionId: String(sessionId), status: 'succeeded', effectiveModel,
+        outcome: structuredOutcome, attention: outcomeAttention(structuredOutcome),
+        ...(summary === undefined ? {} : { summary }),
+      }
     }
     return {
       sessionId: String(sessionId),
@@ -284,6 +369,9 @@ export async function executeAutomationRun(
   } finally {
     removeCancellationListener()
     if (timeout !== undefined) clearTimeout(timeout)
-    await handle?.dispose().catch(() => {})
+    if (handle !== undefined) {
+      const disposed = await settleWithin(handle.dispose().catch(() => {}), teardownGraceMs)
+      if (!disposed) ctx.logger?.warn?.(`dsh-automation: Agent cleanup exceeded ${teardownGraceMs}ms`)
+    }
   }
 }

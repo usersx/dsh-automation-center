@@ -582,7 +582,9 @@ export class AutomationService {
         status: 'cancelled',
         finishedAt: toIso(),
         error: { code: 'cancelled', message: 'The automation was cancelled before it started.' },
-        unread: true,
+        outcome: 'cancelled',
+        attention: 'none',
+        unread: false,
       }
       await this.runs.put(runId, cancelled)
       return cancelled
@@ -880,6 +882,25 @@ export class AutomationService {
         const converted: AutomationRun = {
           ...old,
           admittedAt: old.scheduledFor,
+          attempt: 1,
+          outcome: old.status === 'queued' || old.status === 'running'
+            ? 'pending'
+            : old.status === 'succeeded'
+              ? 'succeeded'
+              : old.status === 'failed'
+                ? 'failed'
+                : old.status === 'cancelled'
+                  ? 'cancelled'
+                  : 'skipped',
+          attention: old.status === 'failed'
+            ? 'failed'
+            : old.status === 'skipped'
+              ? 'review'
+              : 'none',
+          effect: {
+            status: 'none',
+            updatedAt: old.finishedAt ?? old.startedAt ?? old.scheduledFor,
+          },
           targetSnapshot: { ...old.targetSnapshot, modelPolicy, runTimeoutMinutes: defaultTimeout },
           phase: old.status === 'queued' ? 'claim' : old.status === 'running' ? 'executing' : null,
           lease: null,
@@ -972,6 +993,8 @@ export class AutomationService {
         status: 'skipped',
         finishedAt: now,
         error: reason,
+        outcome: 'skipped',
+        attention: 'review',
       })
       await this.pruneWorkspaceHistory(candidate.targetSnapshot.workspaceId)
       return
@@ -1036,6 +1059,11 @@ export class AutomationService {
                 : cancelled
                   ? { code: 'cancelled', message: 'The automation was cancelled before it completed.' }
                   : { code: 'persistence_error', message: 'The run could not persist its execution state.' },
+              outcome: cancelled ? 'cancelled' : 'failed',
+              attention: current.effect.status === 'none' ? (cancelled ? 'review' : 'failed') : 'unknown',
+              effect: current.effect.status === 'none'
+                ? current.effect
+                : { ...current.effect, status: 'unknown', updatedAt: toIso() },
               unread: true,
             }
             await this.runs.put(run.id, failed)
@@ -1063,6 +1091,8 @@ export class AutomationService {
         status: 'failed',
         finishedAt: toIso(),
         error: { code: 'definition_deleted', message: 'The automation was deleted before this run started.' },
+        outcome: 'failed',
+        attention: 'failed',
       })
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
       return
@@ -1085,6 +1115,8 @@ export class AutomationService {
         finishedAt: toIso(),
         effectiveModel: health.effectiveModel,
         error: issue,
+        outcome: 'blocked',
+        attention: 'blocked',
         unread: true,
       })
       await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
@@ -1119,9 +1151,26 @@ export class AutomationService {
       && String((abortReason as { readonly code: unknown }).code) === 'run_timeout'
     const delivering = this.runs.get(run.id) ?? running
     const finishedAt = toIso()
+    const terminalOutcome = timedOut
+      ? 'failed'
+      : completion.outcome
+        ?? (completion.status === 'cancelled' ? 'cancelled' : completion.status === 'failed' ? 'failed' : 'unknown')
+    const terminalAttention = completion.cleanupIncomplete === true
+      ? 'unknown'
+      : timedOut
+      ? (delivering.effect.status === 'none' ? 'failed' : 'unknown')
+      : completion.attention
+        ?? (completion.status === 'cancelled'
+          ? (delivering.effect.status === 'none' ? 'review' : 'unknown')
+          : completion.status === 'failed'
+            ? (delivering.effect.status === 'none' ? 'failed' : 'unknown')
+            : 'unknown')
+    const terminalStatus = completion.status === 'succeeded' && terminalOutcome === 'blocked'
+      ? 'failed'
+      : timedOut ? 'failed' : completion.status
     const completed: AutomationRun = {
       ...delivering,
-      status: timedOut ? 'failed' : completion.status,
+      status: terminalStatus,
       phase: null,
       lease: null,
       sessionId: completion.sessionId ?? null,
@@ -1129,8 +1178,21 @@ export class AutomationService {
       summary: completion.summary ?? null,
       error: timedOut
         ? { code: 'run_timeout', message: 'The automation exceeded its whole-job time limit.' }
-        : completion.error ?? null,
-      unread: true,
+        : terminalOutcome === 'blocked'
+          ? { code: 'task_blocked', message: 'The automation reported that it could not proceed.' }
+          : completion.error ?? null,
+      outcome: terminalOutcome,
+      attention: terminalAttention,
+      effect: completion.cleanupIncomplete !== true && delivering.effect.status === 'none'
+        ? delivering.effect
+        : {
+            ...delivering.effect,
+            status: completion.cleanupIncomplete === true || timedOut || completion.status !== 'succeeded'
+              ? 'unknown'
+              : 'completed',
+            updatedAt: finishedAt,
+          },
+      unread: terminalAttention !== 'none',
       effectiveModel: completion.effectiveModel ?? null,
     }
     await this.runs.put(run.id, completed)
@@ -1167,6 +1229,9 @@ export class AutomationService {
             expiresAt: toIso(Date.parse(now) + RUN_LEASE_MS),
             sideEffectsPossible: current.lease.sideEffectsPossible || sideEffectsPossible,
           },
+      effect: sideEffectsPossible
+        ? { ...current.effect, status: 'possible', updatedAt: now }
+        : current.effect,
     })
   }
 
@@ -1237,6 +1302,8 @@ export class AutomationService {
       if (safeToRetry) {
         await this.runs.put(id, {
           ...run, status: 'queued', phase: 'claim', lease: null, startedAt: null, error: null,
+          attempt: run.attempt + 1, outcome: 'pending', attention: 'none',
+          effect: { status: 'none', updatedAt: finishedAt },
         })
         continue
       }
@@ -1250,6 +1317,11 @@ export class AutomationService {
           code: 'host_interrupted',
           message: 'The DSH Host stopped after this run may have produced side effects; it was not retried.',
         },
+        outcome: 'interrupted',
+        attention: 'unknown',
+        effect: run.effect.status === 'none' && run.lease?.sideEffectsPossible !== true
+          ? run.effect
+          : { ...run.effect, status: 'unknown', updatedAt: finishedAt },
         unread: true,
       })
     }
