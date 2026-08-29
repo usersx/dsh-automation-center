@@ -195,3 +195,28 @@ test('update RPC replaces editable fields behind an expected revision guard', as
     signal,
   }])
 })
+
+test('review RPC emits an idempotent scoped review command', async () => {
+  let handler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined
+  const calls: Array<{ scope: unknown; command: unknown }> = []
+  const ctx = {
+    connection: { rpc: { handle: (_channel: string, value: typeof handler) => { handler = value; return async () => {} } } },
+  }
+  const service = {
+    dispatch: async (scope: unknown, command: unknown) => {
+      calls.push({ scope, command })
+      return { requestId: 'review-1', command: 'review-keep', outcome: 'committed', appliedAt: '2026-08-17T00:00:00Z', replayed: false }
+    },
+  }
+  registerAutomationRpc(ctx as never, service as never)
+  const response = await handler?.('review', {
+    workspaceId: 'workspace-1', runId: 'run-review', action: 'keep', clientRequestId: 'review-1',
+  }, new AbortController().signal)
+  assert.deepEqual(response, { ok: true, value: {
+    requestId: 'review-1', command: 'review-keep', outcome: 'committed', appliedAt: '2026-08-17T00:00:00Z', replayed: false,
+  } })
+  assert.deepEqual(calls, [{
+    scope: { workspaceId: 'workspace-1', creatorKind: 'web' },
+    command: { kind: 'review-keep', requestId: 'review-1', runId: 'run-review' },
+  }])
+})

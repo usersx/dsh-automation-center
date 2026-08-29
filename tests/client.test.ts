@@ -28,6 +28,7 @@ const TARGET = {
   workspaceId: 'workspace-1', workspaceName: 'Repository',
   agentPreset: 'standard', runTimeoutMinutes: 60,
   modelPolicy: { mode: 'inherit' as const },
+  reviewMode: 'direct' as const,
   health: { status: 'ready' as const, issues: [], effectiveModel: { provider: 'provider', model: 'model' } },
 } as const
 
@@ -71,6 +72,7 @@ test('buildCreateInput trims text and normalizes a weekly schedule', () => {
     schedule: { kind: 'weekly', time: '08:30', weekdays: [1, 3, 5], timeZone: 'Asia/Shanghai' },
     timeZone: 'Asia/Shanghai',
     permission: 'workspace-write',
+    reviewMode: 'direct',
     workspaceId: 'workspace-1',
     agentPreset: 'standard',
     modelPolicy: { mode: 'inherit' },
@@ -125,6 +127,7 @@ test('editing starts from the complete stored prompt and preserves interval cade
     },
     timeZone: 'Asia/Shanghai',
     permission: 'workspace-write',
+    reviewMode: 'direct',
     workspaceId: 'workspace-1',
     agentPreset: 'standard',
     modelPolicy: { mode: 'inherit' },
@@ -282,7 +285,7 @@ test('an archived run labels its Session without rendering a broken open button'
     run: { ...common, sessionArchived: true },
     now: new Date('2026-08-17T00:00:01.000Z'), t, busy: false,
     onOpen: () => { throw new Error('archived Session must not be opened') },
-    onMarkRead: () => {}, onCancel: () => {},
+    onMarkRead: () => {}, onCancel: () => {}, onReview: () => {},
   }) as unknown as RenderedRun
   const archivedAction = archived.props.children.find(child => child?.props?.className?.includes('--archived'))
   assert.equal(archivedAction?.type, 'span')
@@ -293,7 +296,7 @@ test('an archived run labels its Session without rendering a broken open button'
   const visible = RecentRun({
     run: { ...common, sessionArchived: false },
     now: new Date('2026-08-17T00:00:01.000Z'), t, busy: false,
-    onOpen: () => {}, onMarkRead: () => {}, onCancel: () => {},
+    onOpen: () => {}, onMarkRead: () => {}, onCancel: () => {}, onReview: () => {},
   }) as unknown as RenderedRun
   assert.equal(visible.props.children.some(child => child?.type === 'button'
     && child?.props?.className === 'dsh-automation-session-id'), true)
@@ -360,6 +363,7 @@ test('two intentional creates with identical input receive distinct durable comm
     schedule: { kind: 'daily' as const, time: '09:00', timeZone: 'UTC' },
     timeZone: 'UTC', permission: 'read-only' as const,
     workspaceId: 'workspace-1', agentPreset: 'standard', modelPolicy: { mode: 'inherit' as const },
+    reviewMode: 'direct' as const,
     runTimeoutMinutes: 60,
   }
 

@@ -33,6 +33,7 @@ export interface ExecutorConfig {
     readonly sessionId: string;
     readonly signal?: AbortSignal;
     readonly teardownGraceMs?: number;
+    readonly executionCwd?: string;
     readonly onPhase?: (phase: Extract<AutomationRunPhase, 'executing' | 'settling'>, sideEffectsPossible: true) => Promise<void>;
 }
 /** Last assistant text and closed-turn reason for the interval owned by this run. */

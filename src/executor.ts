@@ -70,6 +70,7 @@ export interface ExecutorConfig {
   readonly sessionId: string
   readonly signal?: AbortSignal
   readonly teardownGraceMs?: number
+  readonly executionCwd?: string
   readonly onPhase?: (phase: Extract<AutomationRunPhase, 'executing' | 'settling'>, sideEffectsPossible: true) => Promise<void>
 }
 
@@ -226,6 +227,7 @@ export async function executeAutomationRun(
   if (await workspace.status() !== 'ok' || workspace.path !== target.cwd) {
     return { status: 'failed', effectiveModel, error: { code: 'workspace_unavailable', message: 'The target workspace directory is unavailable or changed.' } }
   }
+  const executionCwd = config.executionCwd ?? target.cwd
 
   const sessionId = SessionId(config.sessionId)
   let handle: Awaited<ReturnType<Context['agents']['create']>> | undefined
@@ -239,7 +241,7 @@ export async function executeAutomationRun(
     handle = await ctx.agents.withoutInitiator(() => ctx.agents.create({
       sessionId,
       ...(config.signal === undefined ? {} : { signal: config.signal }),
-      meta: { cwd: target.cwd, agentPreset: target.agentPreset },
+      meta: { cwd: executionCwd, agentPreset: target.agentPreset },
       agentOptions: { provider: selection.provider, model: selection.model },
       setup: async (agentCtx: Context) => {
         await ctx.agentPresets.mount(agentCtx, target.agentPreset)

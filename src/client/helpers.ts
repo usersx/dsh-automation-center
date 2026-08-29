@@ -23,6 +23,7 @@ export interface AutomationFormState {
   readonly weekdays: readonly number[]
   readonly timeZone: string
   readonly permission: CreateAutomationInput['permission']
+  readonly reviewMode: CreateAutomationInput['reviewMode']
   readonly workspaceId: string
   readonly agentPreset: string
   readonly modelMode: 'inherit' | 'pinned'
@@ -42,6 +43,7 @@ export type FormErrorKey =
   | 'form.error.preset'
   | 'form.error.model'
   | 'form.error.timeout'
+  | 'form.error.review'
 
 export class AutomationFormError extends Error {
   constructor(readonly key: FormErrorKey) {
@@ -69,6 +71,7 @@ export function defaultFormState(
     weekdays: [1, 2, 3, 4, 5],
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     permission: 'read-only',
+    reviewMode: 'direct',
     workspaceId,
     agentPreset,
     modelMode: 'inherit',
@@ -103,6 +106,7 @@ export function formStateFromAutomation(automation: AutomationViewModel): Automa
     weekdays: schedule.kind === 'weekly' ? [...schedule.weekdays] : defaults.weekdays,
     timeZone: automation.timeZone,
     permission: automation.permission,
+    reviewMode: automation.reviewMode,
     workspaceId: automation.workspaceId,
     agentPreset: automation.agentPreset,
     modelMode: automation.modelPolicy.mode,
@@ -124,6 +128,9 @@ export function buildCreateInput(form: AutomationFormState, now = new Date()): C
   if (form.agentPreset === '') throw new AutomationFormError('form.error.preset')
   if (form.modelMode === 'pinned' && (form.modelProvider.trim() === '' || form.model.trim() === '')) {
     throw new AutomationFormError('form.error.model')
+  }
+  if (form.reviewMode === 'worktree' && form.permission !== 'workspace-write') {
+    throw new AutomationFormError('form.error.review')
   }
   const runTimeoutMinutes = Number(form.runTimeoutMinutes)
   if (!Number.isInteger(runTimeoutMinutes) || runTimeoutMinutes < 1 || runTimeoutMinutes > 1_440) {
@@ -162,7 +169,7 @@ export function buildCreateInput(form: AutomationFormState, now = new Date()): C
       break
   }
   return {
-    name, prompt, schedule, timeZone: form.timeZone, permission: form.permission,
+    name, prompt, schedule, timeZone: form.timeZone, permission: form.permission, reviewMode: form.reviewMode,
     workspaceId: form.workspaceId,
     agentPreset: form.agentPreset,
     modelPolicy: form.modelMode === 'inherit'
@@ -235,6 +242,9 @@ export function buildUpdateInput(
   if (form.modelMode === 'pinned' && (form.modelProvider.trim() === '' || form.model.trim() === '')) {
     throw new AutomationFormError('form.error.model')
   }
+  if (form.reviewMode === 'worktree' && form.permission !== 'workspace-write') {
+    throw new AutomationFormError('form.error.review')
+  }
   const runTimeoutMinutes = Number(form.runTimeoutMinutes)
   if (!Number.isInteger(runTimeoutMinutes) || runTimeoutMinutes < 1 || runTimeoutMinutes > 1_440) {
     throw new AutomationFormError('form.error.timeout')
@@ -250,6 +260,7 @@ export function buildUpdateInput(
       timeZone: replacement.timeZone,
     }),
     ...(form.permission === automation.permission ? {} : { permission: form.permission }),
+    ...(form.reviewMode === automation.reviewMode ? {} : { reviewMode: form.reviewMode }),
     ...(form.agentPreset === automation.agentPreset ? {} : { agentPreset: form.agentPreset }),
     ...(JSON.stringify(form.modelMode === 'inherit'
       ? { mode: 'inherit' }

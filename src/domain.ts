@@ -42,17 +42,23 @@ const targetSnapshotShape = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
   permissionPreset,
+  reviewMode: z.enum(['direct', 'worktree']),
   runTimeoutMinutes: z.number().int().min(1).max(1_440),
+}).superRefine((value, ctx) => {
+  if (value.reviewMode === 'worktree' && value.permissionPreset !== 'workspace-write') {
+    ctx.addIssue({ code: 'custom', message: 'worktree review requires workspace-write permission', path: ['reviewMode'] })
+  }
 })
 
 function legacyPolicy(value: unknown): unknown {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
   const record = value as Record<string, unknown>
-  if (record.modelPolicy !== undefined) return value
-  const modelPolicy: ModelPolicy = typeof record.provider === 'string' && typeof record.model === 'string'
-    ? { mode: 'pinned', provider: record.provider, model: record.model }
-    : { mode: 'inherit' }
-  return { ...record, modelPolicy }
+  const resolvedPolicy: ModelPolicy = record.modelPolicy !== undefined
+    ? record.modelPolicy as ModelPolicy
+    : typeof record.provider === 'string' && typeof record.model === 'string'
+      ? { mode: 'pinned', provider: record.provider, model: record.model }
+      : { mode: 'inherit' }
+  return { ...record, modelPolicy: resolvedPolicy, reviewMode: record.reviewMode ?? 'direct' }
 }
 
 const targetSnapshot = z.preprocess(legacyPolicy, targetSnapshotShape)
@@ -74,6 +80,7 @@ const automationDefinitionShape = z.object({
   provider: z.string().nullable(),
   model: z.string().nullable(),
   permissionPreset,
+  reviewMode: z.enum(['direct', 'worktree']),
   runTimeoutMinutes: z.number().int().min(1).max(1_440),
   createdBy: creator,
   createdAt: instant,
@@ -90,6 +97,9 @@ const automationDefinitionShape = z.object({
     const expectedModel = value.modelPolicy.mode === 'pinned' ? value.modelPolicy.model : null
     if (value.provider !== expectedProvider || value.model !== expectedModel) {
       ctx.addIssue({ code: 'custom', message: 'provider/model must match modelPolicy', path: ['modelPolicy'] })
+    }
+    if (value.reviewMode === 'worktree' && value.permissionPreset !== 'workspace-write') {
+      ctx.addIssue({ code: 'custom', message: 'worktree review requires workspace-write permission', path: ['reviewMode'] })
     }
   } catch (error) {
     ctx.addIssue({ code: 'custom', message: String(error), path: ['schedule'] })
@@ -160,6 +170,15 @@ const automationRunShape = z.object({
     backgroundProcesses: z.literal(false),
     capturedAt: instant,
   }).nullable(),
+  review: z.object({
+    mode: z.literal('worktree'),
+    status: z.enum(['ready', 'kept', 'accepted', 'discarded', 'failed']),
+    baseSha: nonBlank,
+    worktreePath: nonBlank,
+    patchSha256: nonBlank.nullable(),
+    diffStat: z.string().nullable(),
+    error: z.object({ code: nonBlank, message: nonBlank }).optional(),
+  }).nullable(),
 })
 
 export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) => {
@@ -184,6 +203,7 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
     lease: record.lease ?? null,
     effectiveModel: record.effectiveModel ?? null,
     effectiveContext: record.effectiveContext ?? null,
+    review: record.review ?? null,
     outcome,
     attention: record.attention ?? (
       outcome === 'failed' || outcome === 'interrupted' ? 'failed'
@@ -213,7 +233,10 @@ export const automationDomainSpec = {
     runs: { valueSchema: automationRunSchema },
     receipts: { valueSchema: z.object({
       requestId: nonBlank,
-      command: z.enum(['create', 'update', 'pause', 'resume', 'delete', 'run-now', 'cancel-run', 'mark-read']),
+      command: z.enum([
+        'create', 'update', 'pause', 'resume', 'delete', 'run-now', 'cancel-run', 'mark-read',
+        'review-accept', 'review-keep', 'review-discard',
+      ]),
       outcome: z.enum(['committed', 'rejected', 'unknown']),
       entityId: nonBlank.optional(),
       revision: z.number().int().positive().optional(),
@@ -246,6 +269,7 @@ export function createDefinition(input: CreateAutomationInput): AutomationDefini
     provider: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.provider : null,
     model: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.model : null,
     permissionPreset: input.permissionPreset ?? 'read-only',
+    reviewMode: input.reviewMode ?? 'direct',
     runTimeoutMinutes: input.runTimeoutMinutes ?? 60,
     createdBy: input.createdBy,
     createdAt: now,
@@ -278,6 +302,7 @@ export function updateDefinition(
     provider: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.provider : null,
     model: resolvedModelPolicy.mode === 'pinned' ? resolvedModelPolicy.model : null,
     permissionPreset: input.permissionPreset ?? current.permissionPreset,
+    reviewMode: input.reviewMode ?? current.reviewMode,
     runTimeoutMinutes: input.runTimeoutMinutes ?? current.runTimeoutMinutes,
     updatedAt: parseInstant(input.now, 'now'),
   })
@@ -371,6 +396,7 @@ function queuedRun(
       provider: definition.provider,
       model: definition.model,
       permissionPreset: definition.permissionPreset,
+      reviewMode: definition.reviewMode,
       runTimeoutMinutes: definition.runTimeoutMinutes,
     },
     sessionId: null,
@@ -384,6 +410,7 @@ function queuedRun(
     unread: true,
     effectiveModel: null,
     effectiveContext: null,
+    review: null,
   })
 }
 

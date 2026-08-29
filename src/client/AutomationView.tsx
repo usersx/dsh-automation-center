@@ -40,6 +40,7 @@ const POLL_INTERVAL_MS = 15_000
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const
 
 type BusyAction = 'create' | 'update' | 'pause' | 'resume' | 'run' | 'cancel' | 'read' | 'delete'
+  | 'review-accept' | 'review-keep' | 'review-discard'
 
 function actionKey(action: BusyAction, id = ''): string {
   return `${action}:${id}`
@@ -317,11 +318,39 @@ function AutomationForm(props: AutomationFormProps): JSX.Element {
         </fieldset>
 
         <fieldset className="dsh-automation-fieldset dsh-automation-field--wide">
+          <legend>{t('form.reviewMode')}</legend>
+          <div className="dsh-automation-segmented dsh-automation-segmented--two">
+            {(['direct', 'worktree'] as const).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                className={form.reviewMode === mode ? 'is-selected' : ''}
+                aria-pressed={form.reviewMode === mode}
+                onClick={() => setForm(current => ({
+                  ...current,
+                  reviewMode: mode,
+                  ...(mode === 'worktree' ? { permission: 'workspace-write' as const } : {}),
+                }))}
+              >
+                {t(mode === 'direct' ? 'form.reviewDirect' : 'form.reviewWorktree')}
+              </button>
+            ))}
+          </div>
+          <p className="dsh-automation-model-hint">{t(form.reviewMode === 'worktree'
+            ? 'form.reviewWorktreeHint'
+            : 'form.reviewDirectHint')}</p>
+        </fieldset>
+
+        <fieldset className="dsh-automation-fieldset dsh-automation-field--wide">
           <legend>{t('form.permission')}</legend>
           <div className="dsh-automation-permission-grid">
             {(['read-only', 'workspace-write'] as const).map(permission => (
               <label key={permission} className={form.permission === permission ? 'is-selected' : ''}>
-                <input type="radio" name="permission" value={permission} checked={form.permission === permission} onChange={() => update('permission', permission)} />
+                <input type="radio" name="permission" value={permission} checked={form.permission === permission} onChange={() => setForm(current => ({
+                  ...current,
+                  permission,
+                  ...(permission === 'read-only' ? { reviewMode: 'direct' as const } : {}),
+                }))} />
                 <ShieldIcon />
                 <span>
                   <strong>{t(permission === 'read-only' ? 'form.readOnly' : 'form.workspaceWrite')}</strong>
@@ -373,6 +402,9 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
               <span className="dsh-automation-permission-badge"><ShieldIcon />{t(`card.permission.${automation.permission}`)}</span>
               <span className="dsh-automation-permission-badge">{automation.workspaceName}</span>
               <span className="dsh-automation-permission-badge">{automation.agentPreset} · {automation.runTimeoutMinutes}m</span>
+              {automation.reviewMode === 'worktree' && (
+                <span className="dsh-automation-permission-badge">{t('card.reviewWorktree')}</span>
+              )}
               <span className="dsh-automation-permission-badge">
                 {automation.modelPolicy.mode === 'inherit'
                   ? t('card.modelInherit')
@@ -447,7 +479,7 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
   )
 }
 
-export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
+export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel, onReview }: {
   run: AutomationRunViewModel
   now: Date
   t: Translate
@@ -455,6 +487,7 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
   onOpen: (runId: string, sessionId: string) => void
   onMarkRead: (runId: string) => void
   onCancel: (runId: string) => void
+  onReview: (runId: string, action: 'accept' | 'keep' | 'discard') => void
 }): JSX.Element {
   const timestamp = run.finishedAt ?? run.startedAt ?? run.scheduledFor
   const canMarkRead = run.unread !== false && (
@@ -514,6 +547,14 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
           <PauseIcon />{t('run.cancel')}
         </button>
       )}
+      {run.review !== undefined && (run.review.status === 'ready' || run.review.status === 'kept') && (
+        <div className="dsh-automation-card-actions">
+          <span className="dsh-automation-run-model">{run.review.diffStat ?? t('run.reviewPending')}</span>
+          <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onReview(run.id, 'accept')} disabled={busy}>{t('run.reviewAccept')}</button>
+          <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onReview(run.id, 'keep')} disabled={busy}>{t('run.reviewKeep')}</button>
+          <button className="dsh-automation-button dsh-automation-button--danger" type="button" onClick={() => onReview(run.id, 'discard')} disabled={busy}>{t('run.reviewDiscard')}</button>
+        </div>
+      )}
     </article>
   )
 }
@@ -521,7 +562,7 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
 /** Shared Automation Center view; all data and effects arrive through the selected Surface Adapter. */
 export function AutomationView({
   t, useAutomationState, refresh, createAutomation, updateAutomation, mutateAutomation,
-  runNow, markRunRead, cancelRun, openSession,
+  runNow, markRunRead, cancelRun, reviewRun, openSession,
 }: AutomationViewProps): JSX.Element {
   const state = useAutomationState(value => value)
   const [showCreate, setShowCreate] = useState(false)
@@ -590,6 +631,12 @@ export function AutomationView({
   const onCancelRun = (runId: string): void => {
     if (!window.confirm(t('run.cancelHint'))) return
     void perform(actionKey('cancel', runId), () => cancelRun(runId))
+  }
+  const onReviewRun = (runId: string, action: 'accept' | 'keep' | 'discard'): void => {
+    if ((action === 'accept' || action === 'discard') && !window.confirm(t(
+      action === 'accept' ? 'run.reviewAcceptConfirm' : 'run.reviewDiscardConfirm',
+    ))) return
+    void perform(actionKey(`review-${action}`, runId), () => reviewRun(runId, action))
   }
   const onCreate = async (input: ReturnType<typeof buildCreateInput>): Promise<void> => {
     await perform(actionKey('create'), async () => {
@@ -758,6 +805,7 @@ export function AutomationView({
                   onOpen={onOpenSession}
                   onMarkRead={onMarkRead}
                   onCancel={onCancelRun}
+                  onReview={onReviewRun}
                 />
               ))}</div>}
         </aside>

@@ -16,6 +16,7 @@ export type AutomationOutcome =
 export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown'
 
 export type AutomationPermission = 'read-only' | 'workspace-write'
+export type AutomationReviewMode = 'direct' | 'worktree'
 export type AutomationModelPolicy =
   | { readonly mode: 'inherit' }
   | { readonly mode: 'pinned'; readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
@@ -44,6 +45,7 @@ export interface AutomationViewModel {
   readonly scheduleSummary: string
   readonly timeZone: string
   readonly permission: AutomationPermission
+  readonly reviewMode: AutomationReviewMode
   readonly workspaceId: string
   readonly workspaceName: string
   readonly agentPreset: string
@@ -107,6 +109,15 @@ export interface AutomationRunViewModel {
   readonly error?: string
   readonly errorCode?: string
   readonly unread?: boolean
+  readonly review?: {
+    readonly mode: 'worktree'
+    readonly status: 'ready' | 'kept' | 'accepted' | 'discarded' | 'failed'
+    readonly baseSha: string
+    readonly worktreePath: string
+    readonly patchSha256: string | null
+    readonly diffStat: string | null
+    readonly error?: { readonly code: string; readonly message: string }
+  }
 }
 
 export interface AutomationSnapshot {
@@ -136,6 +147,7 @@ export interface CreateAutomationInput {
   readonly schedule: AutomationSchedule
   readonly timeZone: string
   readonly permission: AutomationPermission
+  readonly reviewMode: AutomationReviewMode
   readonly workspaceId: string
   readonly agentPreset: string
   readonly modelPolicy: AutomationModelPolicy
@@ -148,6 +160,7 @@ export interface UpdateAutomationInput {
   readonly schedule?: AutomationSchedule
   readonly timeZone?: string
   readonly permission?: AutomationPermission
+  readonly reviewMode?: AutomationReviewMode
   readonly agentPreset?: string
   readonly runTimeoutMinutes?: number
   readonly modelPolicy?: AutomationModelPolicy
@@ -194,6 +207,13 @@ export interface CancelRunRequest {
   readonly workspaceId?: string
   readonly clientRequestId: string
   readonly runId: string
+}
+
+export interface ReviewRunRequest {
+  readonly workspaceId?: string
+  readonly clientRequestId: string
+  readonly runId: string
+  readonly action: 'accept' | 'keep' | 'discard'
 }
 
 export interface AutomationCommandReceipt {

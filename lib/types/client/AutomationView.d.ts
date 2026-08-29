@@ -1,6 +1,6 @@
 import type { AutomationViewProps, Translate } from './contracts.js';
 import type { AutomationRunViewModel } from './protocol.js';
-export declare function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel }: {
+export declare function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel, onReview }: {
     run: AutomationRunViewModel;
     now: Date;
     t: Translate;
@@ -8,6 +8,7 @@ export declare function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCan
     onOpen: (runId: string, sessionId: string) => void;
     onMarkRead: (runId: string) => void;
     onCancel: (runId: string) => void;
+    onReview: (runId: string, action: 'accept' | 'keep' | 'discard') => void;
 }): JSX.Element;
 /** Shared Automation Center view; all data and effects arrive through the selected Surface Adapter. */
-export declare function AutomationView({ t, useAutomationState, refresh, createAutomation, updateAutomation, mutateAutomation, runNow, markRunRead, cancelRun, openSession, }: AutomationViewProps): JSX.Element;
+export declare function AutomationView({ t, useAutomationState, refresh, createAutomation, updateAutomation, mutateAutomation, runNow, markRunRead, cancelRun, reviewRun, openSession, }: AutomationViewProps): JSX.Element;

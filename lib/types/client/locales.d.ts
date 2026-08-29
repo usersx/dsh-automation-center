@@ -42,6 +42,11 @@ export declare const en: {
     readonly 'form.reasoningEffort': "Reasoning effort";
     readonly 'form.reasoningDefault': "Provider default";
     readonly 'form.timeout': "Run timeout";
+    readonly 'form.reviewMode': "Execution mode";
+    readonly 'form.reviewDirect': "Direct workspace";
+    readonly 'form.reviewWorktree': "Git review worktree";
+    readonly 'form.reviewDirectHint': "Run directly in the registered workspace.";
+    readonly 'form.reviewWorktreeHint': "Run in an isolated detached worktree, then accept, keep, or discard the patch.";
     readonly 'form.namePlaceholder': "Daily regression triage";
     readonly 'form.prompt': "Task prompt";
     readonly 'form.promptPlaceholder': "Review new test failures, identify the regression, and propose the smallest verified fix…";
@@ -76,6 +81,7 @@ export declare const en: {
     readonly 'form.error.preset': "Choose an available Agent preset.";
     readonly 'form.error.model': "Choose an available provider and model.";
     readonly 'form.error.timeout': "Timeout must be between 1 and 1,440 minutes.";
+    readonly 'form.error.review': "Git review worktree requires Workspace write permission.";
     readonly 'day.1': "Mon";
     readonly 'day.2': "Tue";
     readonly 'day.3': "Wed";
@@ -98,6 +104,7 @@ export declare const en: {
     readonly 'card.permission.read-only': "Read only";
     readonly 'card.permission.workspace-write': "Workspace write";
     readonly 'card.modelInherit': "Follows global model";
+    readonly 'card.reviewWorktree': "Git review";
     readonly 'card.blocked': "Blocked";
     readonly 'card.health.blocked': "Blocked";
     readonly 'card.health.overdue': "Overdue";
@@ -131,6 +138,12 @@ export declare const en: {
     readonly 'run.cancelHint': "Cancellation stops future work; completed side effects are not rolled back.";
     readonly 'run.attempt': "Attempt {count}";
     readonly 'run.effectUnknown': "Side-effect outcome needs reconciliation";
+    readonly 'run.reviewPending': "Review patch is ready";
+    readonly 'run.reviewAccept': "Accept";
+    readonly 'run.reviewKeep': "Keep worktree";
+    readonly 'run.reviewDiscard': "Discard";
+    readonly 'run.reviewAcceptConfirm': "Apply this patch to the clean source checkout?";
+    readonly 'run.reviewDiscardConfirm': "Permanently discard this isolated worktree?";
     readonly 'outcome.pending': "Pending outcome";
     readonly 'outcome.unknown': "Outcome not reported";
     readonly 'outcome.no_change': "No change";

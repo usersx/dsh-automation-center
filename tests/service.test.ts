@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
+import { promisify } from 'node:util'
 import { createDefinition, createManualRun, createScheduledRun } from '../src/domain.ts'
 import { AutomationService, type AutomationConfig } from '../src/service.ts'
 import type { LegacyDefinition, LegacyRun } from '../src/legacy.ts'
@@ -63,6 +68,7 @@ const defaults: AutomationConfig = {
   historyLimit: 200,
   archiveRunSessions: false,
 }
+const execFileAsync = promisify(execFile)
 
 function storedDefinition(now: string): AutomationDefinition {
   return createDefinition({
@@ -91,6 +97,8 @@ async function harness(seed?: {
   readonly legacyDefinitions?: readonly LegacyDefinition[]
   readonly legacyRuns?: readonly LegacyRun[]
   readonly currentDomain?: MemoryDomain
+  readonly workspacePath?: string
+  readonly mutateExecutionCwd?: (cwd: string) => Promise<void>
 }): Promise<{
   service: AutomationService
   domain: MemoryDomain
@@ -110,7 +118,7 @@ async function harness(seed?: {
   }
   const attachedSessions: Array<{ workspaceId: string; sessionId: string }> = []
   const workspace = {
-    id: 'workspace-1', title: 'Repository', path: '/workspace/repo',
+    id: 'workspace-1', title: 'Repository', path: seed?.workspacePath ?? '/workspace/repo',
     status: async () => 'ok' as const,
     attachSession: async (sessionId: string) => { attachedSessions.push({ workspaceId: 'workspace-1', sessionId }) },
   }
@@ -185,7 +193,7 @@ async function harness(seed?: {
         return undefined
       },
       withoutInitiator: (task: () => unknown) => task(),
-      create: async (input: { setup: (ctx: unknown) => Promise<void> }) => {
+      create: async (input: { setup: (ctx: unknown) => Promise<void>; meta: { cwd: string } }) => {
         if (!seed?.completeRuns) throw new Error('executor is not expected in service unit tests')
         const registered: Array<{ name: string }> = []
         let allow: readonly string[] | undefined
@@ -200,6 +208,7 @@ async function harness(seed?: {
             restrict: (filter: { allow: readonly string[] }) => { allow = filter.allow },
           },
         })
+        await seed?.mutateExecutionCwd?.(input.meta.cwd)
         return { agent: runAgent, dispose: async () => {} }
       },
     },
@@ -1016,6 +1025,45 @@ test('configured run-session archival hides a completed Session without deleting
     assert.equal((await service.snapshot(scope)).runs[0]?.sessionArchived, true)
   } finally {
     await service.dispose()
+  }
+})
+
+test('worktree review isolates edits and accepts them only through the review command', async () => {
+  const repository = await mkdtemp(join(tmpdir(), 'automation-service-review-'))
+  await execFileAsync('git', ['-C', repository, 'init'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.name', 'Automation Test'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.email', 'automation@example.invalid'])
+  await writeFile(join(repository, 'base.txt'), 'base\n')
+  await execFileAsync('git', ['-C', repository, 'add', 'base.txt'])
+  await execFileAsync('git', ['-C', repository, 'commit', '-m', 'base'])
+  const fixture = await harness({
+    completeRuns: true,
+    workspacePath: repository,
+    config: { maxConcurrentRuns: 1 },
+    mutateExecutionCwd: cwd => writeFile(join(cwd, 'review.txt'), 'reviewed\n'),
+  })
+  try {
+    const definition = await fixture.service.create(scope, {
+      name: 'Worktree review', prompt: 'Create review.txt.',
+      schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+      permissionPreset: 'workspace-write', reviewMode: 'worktree',
+    })
+    const queued = await fixture.service.runNow(scope, definition.id)
+    fixture.service.start()
+    await waitFor(() => fixture.domain.runs.get(queued.id)?.status === 'succeeded')
+    const completed = fixture.domain.runs.get(queued.id)!
+    assert.equal(completed.review?.status, 'ready')
+    assert.match(completed.review?.diffStat ?? '', /review\.txt/)
+    await assert.rejects(() => readFile(join(repository, 'review.txt'), 'utf8'), /ENOENT/)
+
+    const accepted = await fixture.service.reviewRun(
+      { creatorKind: 'web' }, completed.id, 'accept',
+    )
+    assert.equal(accepted.review?.status, 'accepted')
+    assert.equal(accepted.attention, 'none')
+    assert.equal(await readFile(join(repository, 'review.txt'), 'utf8'), 'reviewed\n')
+  } finally {
+    await fixture.service.dispose()
   }
 })
 

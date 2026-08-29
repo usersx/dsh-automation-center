@@ -24,6 +24,7 @@ function pageShares(
     runNow: runtime.runNow,
     markRunRead: runtime.markRunRead,
     cancelRun: runtime.cancelRun,
+    reviewRun: runtime.reviewRun,
     openSession: (runId: string, runSessionId: string) => runtime.openRunSession(runId, async () => {
       await ctx.sessions.refresh()
       showConversation()

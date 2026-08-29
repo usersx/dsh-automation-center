@@ -8,6 +8,7 @@ import type {
   MarkReadRequest,
   MutateRequest,
   RunNowRequest,
+  ReviewRunRequest,
   SnapshotRequest,
   UpdateAutomationInput,
   UpdateRequest,
@@ -37,6 +38,7 @@ export interface AutomationRuntime {
   runNow(automationId: string): Promise<void>
   markRunRead(runId: string): Promise<void>
   cancelRun(runId: string): Promise<void>
+  reviewRun(runId: string, action: ReviewRunRequest['action']): Promise<void>
   openRunSession(runId: string, open: () => Promise<void>): Promise<void>
 }
 
@@ -148,6 +150,10 @@ export function createAutomationRuntime(rpc: ClientRpc): AutomationRuntime {
     async cancelRun(runId) {
       const payload: CancelRunRequest = { runId, clientRequestId: requestId() }
       await mutateThenRefresh('cancel-run', payload)
+    },
+    async reviewRun(runId, action) {
+      const payload: ReviewRunRequest = { runId, action, clientRequestId: requestId() }
+      await mutateThenRefresh('review', payload)
     },
     async openRunSession(runId, open) {
       // A failed navigation must leave the run unread so it still asks for

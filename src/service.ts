@@ -24,6 +24,7 @@ import {
   type LegacyRun,
 } from './legacy.ts'
 import { latestDueOccurrence, nextOccurrence } from './recurrence.ts'
+import { acceptGitReview, collectGitReview, discardGitReview, keepGitReview, prepareGitReview } from './review.ts'
 import type {
   AutomationDefinition,
   AutomationLifecycleEvent,
@@ -36,6 +37,7 @@ import type {
   AutomationRunPhase,
   AutomationSchedule,
   PermissionPreset,
+  ReviewMode,
   StoredAutomationCommandReceipt,
   UpdateAutomationInput,
 } from './types.ts'
@@ -61,6 +63,7 @@ export interface CreateRequest {
   readonly permissionPreset?: PermissionPreset
   readonly agentPreset?: string
   readonly modelPolicy?: ModelPolicy
+  readonly reviewMode?: ReviewMode
   readonly runTimeoutMinutes?: number
 }
 
@@ -73,7 +76,11 @@ export type AutomationCommand =
   | { readonly kind: 'create'; readonly requestId: string; readonly input: CreateRequest }
   | { readonly kind: 'update'; readonly requestId: string; readonly automationId: string; readonly input: UpdateRequest }
   | { readonly kind: 'pause' | 'resume' | 'delete' | 'run-now'; readonly requestId: string; readonly automationId: string }
-  | { readonly kind: 'cancel-run' | 'mark-read'; readonly requestId: string; readonly runId: string }
+  | {
+      readonly kind: 'cancel-run' | 'mark-read' | 'review-accept' | 'review-keep' | 'review-discard'
+      readonly requestId: string
+      readonly runId: string
+    }
 
 export type AutomationScope =
   | { readonly sessionId: string; readonly creatorKind: 'agent' }
@@ -329,6 +336,7 @@ export class AutomationService {
         agentPreset,
         modelPolicy,
         permissionPreset: request.permissionPreset ?? 'read-only',
+        reviewMode: request.reviewMode ?? 'direct',
         runTimeoutMinutes: request.runTimeoutMinutes ?? Math.max(1, Math.round(this.config.runTimeoutMs / 60_000)),
         createdBy: {
           kind: scope.creatorKind,
@@ -528,6 +536,12 @@ export class AutomationService {
         const value = await this.markRead(scope, command.runId, signal)
         return { entityId: value.id }
       }
+      case 'review-accept':
+      case 'review-keep':
+      case 'review-discard': {
+        const value = await this.reviewRun(scope, command.runId, command.kind.slice('review-'.length) as 'accept' | 'keep' | 'discard', signal)
+        return { entityId: value.id }
+      }
     }
   }
 
@@ -591,6 +605,40 @@ export class AutomationService {
         unread: false,
       }
       return this.commitRun(cancelled, 'terminal')
+    }, signal)
+  }
+
+  async reviewRun(
+    scope: AutomationScope,
+    runId: string,
+    action: 'accept' | 'keep' | 'discard',
+    signal?: AbortSignal,
+  ): Promise<AutomationRun> {
+    return this.serialize(async () => {
+      const run = this.runs.get(runId)
+      if (run === undefined) throw new Error(`unknown automation run '${runId}'`)
+      if (!(scope.creatorKind === 'web' && scope.workspaceId === undefined)) {
+        const { workspace } = await this.resolveScope(scope)
+        if (run.targetSnapshot.workspaceId !== workspace.id) {
+          throw new Error('The automation run belongs to another workspace.')
+        }
+      }
+      throwIfCancelled(signal)
+      if (run.review === null || (run.review.status !== 'ready' && run.review.status !== 'kept')) {
+        throw new Error('The automation run has no pending Git review.')
+      }
+      const review = action === 'accept'
+        ? await acceptGitReview(run.targetSnapshot.cwd, run.review)
+        : action === 'discard'
+          ? await discardGitReview(run.targetSnapshot.cwd, run.review)
+          : keepGitReview(run.review)
+      const pending = review.status === 'kept'
+      return this.commitRun({
+        ...run,
+        review,
+        attention: pending ? 'review' : 'none',
+        unread: pending,
+      }, 'attention')
     }, signal)
   }
 
@@ -871,7 +919,9 @@ export class AutomationService {
         const modelPolicy = old.provider !== null && old.model !== null
           ? { mode: 'pinned' as const, provider: old.provider, model: old.model }
           : { mode: 'inherit' as const }
-        const converted: AutomationDefinition = { ...old, modelPolicy, runTimeoutMinutes: defaultTimeout }
+        const converted: AutomationDefinition = {
+          ...old, modelPolicy, reviewMode: 'direct', runTimeoutMinutes: defaultTimeout,
+        }
         const existing = this.definitions.get(id)
         if (existing !== undefined) {
           if (JSON.stringify(existing) !== JSON.stringify(converted)) {
@@ -909,7 +959,10 @@ export class AutomationService {
             updatedAt: old.finishedAt ?? old.startedAt ?? old.scheduledFor,
           },
           effectiveContext: null,
-          targetSnapshot: { ...old.targetSnapshot, modelPolicy, runTimeoutMinutes: defaultTimeout },
+          review: null,
+          targetSnapshot: {
+            ...old.targetSnapshot, modelPolicy, reviewMode: 'direct', runTimeoutMinutes: defaultTimeout,
+          },
           phase: old.status === 'queued' ? 'claim' : old.status === 'running' ? 'executing' : null,
           lease: null,
           effectiveModel: null,
@@ -1167,11 +1220,30 @@ export class AutomationService {
         capturedAt: startedAt,
       },
     }
-    await this.commitRun(running, 'phase')
+    let executingRun = await this.commitRun(running, 'phase')
+    let executionCwd: string | undefined
+    if (run.targetSnapshot.reviewMode === 'worktree') {
+      try {
+        const review = await prepareGitReview(run.targetSnapshot.cwd)
+        executingRun = await this.commitRun({ ...executingRun, review }, 'phase')
+        executionCwd = review.worktreePath
+      } catch (error: unknown) {
+        const finishedAt = toIso()
+        await this.commitRun({
+          ...executingRun,
+          status: 'failed', phase: null, lease: null, finishedAt,
+          error: { code: 'review_setup_failed', message: asMessage(error) },
+          outcome: 'blocked', attention: 'blocked', unread: true,
+        }, 'terminal')
+        await this.pruneWorkspaceHistory(run.targetSnapshot.workspaceId)
+        return
+      }
+    }
     const completion = await executeAutomationRun(this.ctx, definition, run, {
       runTimeoutMs: run.targetSnapshot.runTimeoutMinutes * 60_000,
       sessionId,
       signal,
+      ...(executionCwd === undefined ? {} : { executionCwd }),
       onPhase: async (phase, sideEffectsPossible) => {
         await this.persistRunPhase(run.id, phase, sideEffectsPossible)
       },
@@ -1181,13 +1253,32 @@ export class AutomationService {
     const timedOut = signal.aborted === true
       && typeof abortReason === 'object' && abortReason !== null && 'code' in abortReason
       && String((abortReason as { readonly code: unknown }).code) === 'run_timeout'
-    const delivering = this.runs.get(run.id) ?? running
+    const delivering = this.runs.get(run.id) ?? executingRun
     const finishedAt = toIso()
-    const terminalOutcome = timedOut
+    let review = delivering.review
+    let reviewFailure: { readonly code: string; readonly message: string } | undefined
+    if (review !== null && (review.status === 'ready' || review.status === 'kept')) {
+      try {
+        review = await collectGitReview(review)
+      } catch (error: unknown) {
+        reviewFailure = { code: 'review_collect_failed', message: asMessage(error) }
+        review = { ...review, status: 'failed', error: reviewFailure }
+      }
+    }
+    const reviewHasChanges = review?.status === 'ready' && review.diffStat !== 'No changes'
+    const terminalOutcome = reviewFailure !== undefined
+      ? 'failed'
+      : reviewHasChanges
+        ? 'changes_ready'
+        : timedOut
       ? 'failed'
       : completion.outcome
         ?? (completion.status === 'cancelled' ? 'cancelled' : completion.status === 'failed' ? 'failed' : 'unknown')
-    const terminalAttention = completion.cleanupIncomplete === true
+    const terminalAttention = reviewFailure !== undefined
+      ? 'failed'
+      : reviewHasChanges
+        ? 'review'
+        : completion.cleanupIncomplete === true
       ? 'unknown'
       : timedOut
       ? (delivering.effect.status === 'none' ? 'failed' : 'unknown')
@@ -1212,7 +1303,7 @@ export class AutomationService {
         ? { code: 'run_timeout', message: 'The automation exceeded its whole-job time limit.' }
         : terminalOutcome === 'blocked'
           ? { code: 'task_blocked', message: 'The automation reported that it could not proceed.' }
-          : completion.error ?? null,
+          : reviewFailure ?? completion.error ?? null,
       outcome: terminalOutcome,
       attention: terminalAttention,
       effect: completion.cleanupIncomplete !== true && delivering.effect.status === 'none'
@@ -1229,6 +1320,7 @@ export class AutomationService {
       effectiveContext: delivering.effectiveContext === null || completion.effectiveTools === undefined
         ? delivering.effectiveContext
         : { ...delivering.effectiveContext, tools: completion.effectiveTools },
+      review,
     }
     await this.commitRun(completed, 'terminal')
     await this.archiveRunSession(completed)

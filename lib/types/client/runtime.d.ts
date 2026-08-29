@@ -1,5 +1,5 @@
 import type { ClientRpc } from './contracts.js';
-import type { AutomationSnapshot, CreateAutomationInput, MutateRequest, UpdateAutomationInput } from './protocol.js';
+import type { AutomationSnapshot, CreateAutomationInput, MutateRequest, ReviewRunRequest, UpdateAutomationInput } from './protocol.js';
 export interface AutomationClientState {
     readonly phase: 'idle' | 'loading' | 'ready' | 'error';
     readonly snapshot?: AutomationSnapshot;
@@ -19,6 +19,7 @@ export interface AutomationRuntime {
     runNow(automationId: string): Promise<void>;
     markRunRead(runId: string): Promise<void>;
     cancelRun(runId: string): Promise<void>;
+    reviewRun(runId: string, action: ReviewRunRequest['action']): Promise<void>;
     openRunSession(runId: string, open: () => Promise<void>): Promise<void>;
 }
 /** One root-scoped observable shared by the global Automation Center and its sidebar action. */

@@ -151,6 +151,7 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
       scheduleSummary: definition.rrule,
       timeZone: definition.timeZone,
       permission: definition.permissionPreset,
+      reviewMode: definition.reviewMode,
       workspaceId: definition.workspaceId,
       workspaceName: snapshot.workspaces.find(item => item.id === definition.workspaceId)?.title ?? definition.workspaceId,
       agentPreset: definition.agentPreset,
@@ -196,6 +197,7 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
       ...(run.outcome == null ? {} : { outcome: run.outcome }),
       ...(run.attention == null ? {} : { attention: run.attention }),
       ...(run.effect == null ? {} : { effect: run.effect }),
+      ...(run.review == null ? {} : { review: run.review }),
       trigger: run.trigger,
       scheduledFor: run.scheduledFor,
       ...(run.admittedAt == null ? {} : { admittedAt: run.admittedAt }),
@@ -233,6 +235,10 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
             throw new Error('input.permission must be read-only or workspace-write')
           }
           const agentPreset = optionalString(input.agentPreset, 'input.agentPreset')
+          const reviewMode = input.reviewMode === undefined ? 'direct' : string(input.reviewMode, 'input.reviewMode')
+          if (reviewMode !== 'direct' && reviewMode !== 'worktree') {
+            throw new Error('input.reviewMode must be direct or worktree')
+          }
           const runTimeoutMinutes = input.runTimeoutMinutes === undefined
             ? undefined
             : positiveInteger(input.runTimeoutMinutes, 'input.runTimeoutMinutes')
@@ -244,6 +250,7 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
             prompt: string(input.prompt, 'input.prompt'),
             schedule: toDomainSchedule(input.schedule, timeZone),
             permissionPreset: permission,
+            reviewMode,
             ...(input.modelPolicy === undefined ? {} : { modelPolicy: toModelPolicy(input.modelPolicy) }),
             ...(agentPreset === undefined ? {} : { agentPreset }),
             ...(runTimeoutMinutes === undefined ? {} : { runTimeoutMinutes }),
@@ -260,6 +267,7 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
             prompt?: string
             schedule?: DomainSchedule
             permissionPreset?: 'read-only' | 'workspace-write'
+            reviewMode?: 'direct' | 'worktree'
             agentPreset?: string
             modelPolicy?: ModelPolicy
             runTimeoutMinutes?: number
@@ -280,6 +288,13 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
               throw new Error('input.permission must be read-only or workspace-write')
             }
             value.permissionPreset = permission
+          }
+          if (input.reviewMode !== undefined) {
+            const reviewMode = string(input.reviewMode, 'input.reviewMode')
+            if (reviewMode !== 'direct' && reviewMode !== 'worktree') {
+              throw new Error('input.reviewMode must be direct or worktree')
+            }
+            value.reviewMode = reviewMode
           }
           if (input.agentPreset !== undefined) value.agentPreset = string(input.agentPreset, 'input.agentPreset')
           if (input.modelPolicy !== undefined) value.modelPolicy = toModelPolicy(input.modelPolicy)
@@ -326,6 +341,18 @@ export function registerAutomationRpc(ctx: RpcContext, service: AutomationServic
         case 'cancel-run': {
           const receipt = await service.dispatch(scopeOf(payload), {
             kind: 'cancel-run',
+            requestId: string(payload.clientRequestId, 'clientRequestId'),
+            runId: string(payload.runId, 'runId'),
+          }, signal)
+          return { ok: true, value: receipt }
+        }
+        case 'review': {
+          const action = string(payload.action, 'action')
+          if (action !== 'accept' && action !== 'keep' && action !== 'discard') {
+            throw new Error('action must be accept, keep, or discard')
+          }
+          const receipt = await service.dispatch(scopeOf(payload), {
+            kind: `review-${action}`,
             requestId: string(payload.clientRequestId, 'clientRequestId'),
             runId: string(payload.runId, 'runId'),
           }, signal)

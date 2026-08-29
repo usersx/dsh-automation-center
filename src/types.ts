@@ -36,6 +36,7 @@ export interface WeeklySchedule {
 
 export type AutomationSchedule = OnceSchedule | IntervalSchedule | DailySchedule | WeeklySchedule
 export type PermissionPreset = 'read-only' | 'workspace-write'
+export type ReviewMode = 'direct' | 'worktree'
 
 export interface InheritModelPolicy {
   readonly mode: 'inherit'
@@ -93,6 +94,7 @@ export interface AutomationDefinition {
   readonly provider: string | null
   readonly model: string | null
   readonly permissionPreset: PermissionPreset
+  readonly reviewMode: ReviewMode
   readonly runTimeoutMinutes: number
   readonly createdBy: AutomationCreator
   readonly createdAt: string
@@ -107,6 +109,7 @@ export interface AutomationTargetSnapshot {
   readonly provider: string | null
   readonly model: string | null
   readonly permissionPreset: PermissionPreset
+  readonly reviewMode: ReviewMode
   readonly runTimeoutMinutes: number
 }
 
@@ -135,6 +138,16 @@ export interface AutomationEffectiveContext {
   readonly approvalPolicy: 'never'
   readonly backgroundProcesses: false
   readonly capturedAt: string
+}
+
+export interface AutomationReviewState {
+  readonly mode: 'worktree'
+  readonly status: 'ready' | 'kept' | 'accepted' | 'discarded' | 'failed'
+  readonly baseSha: string
+  readonly worktreePath: string
+  readonly patchSha256: string | null
+  readonly diffStat: string | null
+  readonly error?: { readonly code: string; readonly message: string } | undefined
 }
 
 export interface AutomationRun {
@@ -171,6 +184,7 @@ export interface AutomationRun {
   readonly unread: boolean
   readonly effectiveModel: AutomationModelSelection | null
   readonly effectiveContext: AutomationEffectiveContext | null
+  readonly review: AutomationReviewState | null
 }
 
 export interface AutomationLifecycleEvent {
@@ -200,6 +214,7 @@ export interface CreateAutomationInput {
   readonly provider?: string | null
   readonly model?: string | null
   readonly permissionPreset?: PermissionPreset
+  readonly reviewMode?: ReviewMode
   readonly runTimeoutMinutes?: number
   readonly createdBy: AutomationCreator
   readonly now: string
@@ -215,6 +230,7 @@ export interface UpdateAutomationInput {
   readonly provider?: string | null
   readonly model?: string | null
   readonly permissionPreset?: PermissionPreset
+  readonly reviewMode?: ReviewMode
   readonly runTimeoutMinutes?: number
   readonly now: string
 }
@@ -233,6 +249,9 @@ export type AutomationCommandName =
   | 'run-now'
   | 'cancel-run'
   | 'mark-read'
+  | 'review-accept'
+  | 'review-keep'
+  | 'review-discard'
 
 export interface AutomationCommandReceipt {
   readonly requestId: string

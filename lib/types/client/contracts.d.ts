@@ -15,6 +15,7 @@ export interface AutomationViewProps {
     readonly runNow: AutomationRuntime['runNow'];
     readonly markRunRead: AutomationRuntime['markRunRead'];
     readonly cancelRun: AutomationRuntime['cancelRun'];
+    readonly reviewRun: AutomationRuntime['reviewRun'];
     readonly openSession: (runId: string, sessionId: string) => Promise<void>;
 }
 export interface AutomationSidebarActionProps {

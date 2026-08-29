@@ -1,7 +1,7 @@
 /** Durable automation authority: definitions, occurrence claims, clock, and run execution. */
 import type { Context } from '@deepseek-ai/cordis';
 import { type LegacyMigrationSummary } from './legacy.ts';
-import type { AutomationDefinition, AutomationCommandReceipt, AutomationModelSelection, ModelPolicy, AutomationRun, AutomationSchedule, PermissionPreset, UpdateAutomationInput } from './types.ts';
+import type { AutomationDefinition, AutomationCommandReceipt, AutomationModelSelection, ModelPolicy, AutomationRun, AutomationSchedule, PermissionPreset, ReviewMode, UpdateAutomationInput } from './types.ts';
 export declare const AUTOMATION_SESSION_PREFIX = "dsh-automation-session-";
 export interface AutomationConfig {
     readonly maxConcurrentRuns: number;
@@ -18,6 +18,7 @@ export interface CreateRequest {
     readonly permissionPreset?: PermissionPreset;
     readonly agentPreset?: string;
     readonly modelPolicy?: ModelPolicy;
+    readonly reviewMode?: ReviewMode;
     readonly runTimeoutMinutes?: number;
 }
 type UpdateRequest = Omit<UpdateAutomationInput, 'now'> & {
@@ -38,7 +39,7 @@ export type AutomationCommand = {
     readonly requestId: string;
     readonly automationId: string;
 } | {
-    readonly kind: 'cancel-run' | 'mark-read';
+    readonly kind: 'cancel-run' | 'mark-read' | 'review-accept' | 'review-keep' | 'review-discard';
     readonly requestId: string;
     readonly runId: string;
 };
@@ -145,6 +146,7 @@ export declare class AutomationService {
     private commandErrorCode;
     markRead(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
     cancelRun(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
+    reviewRun(scope: AutomationScope, runId: string, action: 'accept' | 'keep' | 'discard', signal?: AbortSignal): Promise<AutomationRun>;
     private resolveScope;
     private ownedDefinition;
     private validateModelPolicy;
