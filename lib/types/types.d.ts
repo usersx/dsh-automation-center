@@ -1,6 +1,8 @@
 export type AutomationStatus = 'active' | 'paused';
 export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled' | 'interrupted';
 export type AutomationRunPhase = 'claim' | 'setup' | 'executing' | 'settling' | 'delivery';
+export type AutomationOutcome = 'pending' | 'unknown' | 'no_change' | 'changes_ready' | 'needs_input' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'interrupted' | 'skipped' | 'partial';
+export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown';
 export type Weekday = 'MO' | 'TU' | 'WE' | 'TH' | 'FR' | 'SA' | 'SU';
 export interface OnceSchedule {
     readonly kind: 'once';
@@ -109,6 +111,10 @@ export interface AutomationRun {
     readonly occurrenceKey: string;
     readonly trigger: 'schedule' | 'manual';
     readonly scheduledFor: string;
+    /** Durable admission time, distinct from the planned occurrence. */
+    readonly admittedAt: string;
+    /** One-based execution attempt for this durable occurrence. */
+    readonly attempt: number;
     readonly status: AutomationRunStatus;
     readonly phase: AutomationRunPhase | null;
     readonly lease: AutomationRunLease | null;
@@ -119,6 +125,13 @@ export interface AutomationRun {
     readonly finishedAt: string | null;
     readonly summary: string | null;
     readonly error: AutomationRunError | null;
+    readonly outcome: AutomationOutcome;
+    readonly attention: AutomationAttention;
+    readonly effect: {
+        readonly status: 'none' | 'possible' | 'completed' | 'unknown';
+        readonly updatedAt: string;
+        readonly externalId?: string | undefined;
+    };
     readonly unread: boolean;
     readonly effectiveModel: AutomationModelSelection | null;
 }

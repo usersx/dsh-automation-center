@@ -265,6 +265,8 @@ test('executor preserves a whole-job timeout that fires before Agent setup', asy
 })
 
 test('executor setup failures retain an actionable error classification', () => {
+  assert.equal(classifyExecutorError(new Error('DeepSeek REQUEST_EXTENSION preparation failed')).code, 'request_extension')
+  assert.equal(classifyExecutorError(new Error('SSE stream ended without [DONE]')).code, 'stream_closed')
   assert.equal(classifyExecutorError(new Error('Agent preset standard is unavailable')).code, 'preset_unavailable')
   assert.equal(classifyExecutorError(new Error('The selected model cannot be loaded')).code, 'model_unavailable')
   assert.equal(classifyExecutorError(new Error('Permission denied by sandbox')).code, 'permission_denied')

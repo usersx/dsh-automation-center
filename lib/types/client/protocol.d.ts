@@ -1,6 +1,8 @@
 /** JSON contract shared conceptually with the dsh-automation Host RPC adapter. */
 export type AutomationStatus = 'active' | 'paused';
 export type AutomationRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped' | 'cancelled' | 'interrupted';
+export type AutomationOutcome = 'pending' | 'unknown' | 'no_change' | 'changes_ready' | 'needs_input' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'interrupted' | 'skipped' | 'partial';
+export type AutomationAttention = 'none' | 'review' | 'needs_input' | 'failed' | 'blocked' | 'unknown';
 export type AutomationPermission = 'read-only' | 'workspace-write';
 export type AutomationModelPolicy = {
     readonly mode: 'inherit';
@@ -54,7 +56,7 @@ export interface AutomationViewModel {
     readonly agentPreset: string;
     readonly modelPolicy: AutomationModelPolicy;
     readonly health: {
-        readonly status: 'ready' | 'blocked';
+        readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled';
         readonly issues: readonly {
             readonly code: string;
             readonly message: string;
@@ -64,6 +66,13 @@ export interface AutomationViewModel {
             readonly model: string;
             readonly reasoningEffort?: string;
         };
+        readonly expectedAt?: string | null;
+        readonly admittedAt?: string | null;
+        readonly claimedAt?: string | null;
+        readonly lastProgressAt?: string | null;
+        readonly overdueByMs?: number;
+        readonly queueWaitMs?: number | null;
+        readonly admissionStatus?: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal';
     };
     readonly runTimeoutMinutes: number;
     readonly nextRunAt?: string;
@@ -77,6 +86,14 @@ export interface AutomationRunViewModel {
     readonly automationId: string;
     readonly automationName: string;
     readonly status: AutomationRunStatus;
+    readonly attempt?: number;
+    readonly outcome?: AutomationOutcome;
+    readonly attention?: AutomationAttention;
+    readonly effect?: {
+        readonly status: 'none' | 'possible' | 'completed' | 'unknown';
+        readonly updatedAt: string;
+        readonly externalId?: string;
+    };
     readonly phase?: 'claim' | 'setup' | 'executing' | 'settling' | 'delivery';
     readonly heartbeatAt?: string;
     readonly leaseExpiresAt?: string;
@@ -88,6 +105,7 @@ export interface AutomationRunViewModel {
     };
     readonly trigger: 'schedule' | 'manual' | 'catch-up';
     readonly scheduledFor: string;
+    readonly admittedAt?: string;
     readonly startedAt?: string;
     readonly finishedAt?: string;
     readonly sessionId?: string;

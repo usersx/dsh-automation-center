@@ -94,6 +94,7 @@ async function harness(seed?: {
   service: AutomationService
   domain: MemoryDomain
   archivedSessionIds: string[]
+  attachedSessions: Array<{ workspaceId: string; sessionId: string }>
   warnings: string[]
   removeSourceAgent(): void
   reopenService(): Promise<AutomationService>
@@ -105,15 +106,16 @@ async function harness(seed?: {
     table: (name: 'definitions' | 'runs') => name === 'definitions' ? legacyDefinitions : legacyRuns,
     close: async () => {},
   }
+  const attachedSessions: Array<{ workspaceId: string; sessionId: string }> = []
   const workspace = {
     id: 'workspace-1', title: 'Repository', path: '/workspace/repo',
     status: async () => 'ok' as const,
-    attachSession: async () => {},
+    attachSession: async (sessionId: string) => { attachedSessions.push({ workspaceId: 'workspace-1', sessionId }) },
   }
   const otherWorkspace = {
     id: 'workspace-2', title: 'Other repository', path: '/workspace/other',
     status: async () => 'ok' as const,
-    attachSession: async () => {},
+    attachSession: async (sessionId: string) => { attachedSessions.push({ workspaceId: 'workspace-2', sessionId }) },
   }
   const sourceAgent = {
     id: scope.sessionId,
@@ -167,7 +169,7 @@ async function harness(seed?: {
         if (path === otherWorkspace.path) return otherWorkspace
         return undefined
       },
-      get: () => workspace,
+      get: (id: string) => id === workspace.id ? workspace : id === otherWorkspace.id ? otherWorkspace : undefined,
       archiveSession: async (sessionId: string) => {
         if (seed?.rejectArchive) throw new Error('archive unavailable')
         if (!archivedSessionIds.includes(sessionId)) archivedSessionIds.push(sessionId)
@@ -228,6 +230,7 @@ async function harness(seed?: {
     service,
     domain,
     archivedSessionIds,
+    attachedSessions,
     warnings,
     removeSourceAgent: () => { liveSourceAgent = undefined },
     reopenService,
@@ -887,7 +890,7 @@ test('startup recovery archives a run that may have produced side effects and ma
 })
 
 test('supervisor persists every execution phase and clears its lease at terminal completion', async () => {
-  const { service, domain } = await harness({
+  const { service, domain, attachedSessions } = await harness({
     completeRuns: true,
     config: { maxConcurrentRuns: 1 },
   })
@@ -912,6 +915,9 @@ test('supervisor persists every execution phase and clears its lease at terminal
     assert.equal(domain.runs.get(queued.id)?.outcome, 'unknown')
     assert.equal(domain.runs.get(queued.id)?.attention, 'unknown')
     assert.equal(domain.runs.get(queued.id)?.effect.status, 'completed')
+    assert.deepEqual(attachedSessions, [{
+      workspaceId: 'workspace-1', sessionId: domain.runs.get(queued.id)!.sessionId!,
+    }])
   } finally {
     await service.dispose()
   }

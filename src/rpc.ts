@@ -11,7 +11,7 @@ interface RpcContext {
       handle(
         channel: string,
         handler: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>,
-        options: { readonly authority: 'loopback' | 'trusted-host' },
+        options?: { readonly authority: 'loopback' | 'trusted-host' },
       ): () => Promise<void>
     }
   }
@@ -210,7 +210,11 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
   }
 }
 
-/** Register the channel as loopback-only because it controls unattended writes. */
+/**
+ * Register one authenticated management channel. rc.8/rc.2 enforce the
+ * requested loopback authority; alpha.1 authenticates the channel through its
+ * one-time browser token and ignores the legacy third argument.
+ */
 export function registerAutomationRpc(ctx: RpcContext, service: AutomationService): () => Promise<void> {
   return ctx.connection.rpc.handle('/dsh-automation-center', async (endpoint, rawPayload, signal) => {
     try {

@@ -175,6 +175,8 @@ function reasonError(reason: Record<string, any> | undefined): { readonly code: 
 
 export function classifyExecutorError(error: unknown): { readonly code: string; readonly message: string } {
   const message = error instanceof Error ? error.message : 'The automation executor failed.'
+  if (/REQUEST_EXTENSION|request extension/i.test(message)) return { code: 'request_extension', message }
+  if (/STREAM_CLOSED|without \[DONE\]/i.test(message)) return { code: 'stream_closed', message }
   if (/preset/i.test(message)) return { code: 'preset_unavailable', message }
   if (/(provider|model)/i.test(message)) return { code: 'model_unavailable', message }
   if (/(permission|denied|approval)/i.test(message)) return { code: 'permission_denied', message }

@@ -82,12 +82,19 @@ export interface AutomationModelOption extends AutomationModelSelection {
     }[];
 }
 export interface AutomationHealth {
-    readonly status: 'ready' | 'blocked';
+    readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled';
     readonly issues: readonly {
         readonly code: string;
         readonly message: string;
     }[];
     readonly effectiveModel: AutomationModelSelection | null;
+    readonly expectedAt: string | null;
+    readonly admittedAt: string | null;
+    readonly claimedAt: string | null;
+    readonly lastProgressAt: string | null;
+    readonly overdueByMs: number;
+    readonly queueWaitMs: number | null;
+    readonly admissionStatus: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal';
 }
 export interface AutomationRunView extends AutomationRun {
     readonly sessionArchived: boolean;
@@ -145,8 +152,12 @@ export declare class AutomationService {
     private llmRuntime;
     private modelCatalog;
     private preflightTarget;
+    /** Derive scheduler health from the existing Definition and Run facts. */
+    private deriveAutomationHealth;
     /** Import the old plugin's v1 domain without ever mutating or deleting it. */
     private importLegacyData;
+    /** A committed or ambiguous delete wins over the immutable legacy source. */
+    private hasLegacyDeleteTombstone;
     private requestPump;
     private pumpOnce;
     private claimLatestDue;
