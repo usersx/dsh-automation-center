@@ -23,8 +23,8 @@
 | 通用 DAG、多 Agent、分布式 Scheduler、大连接器市场、云 sandbox | 未实现 | 日报 08-23—08-29 均列为暂不投入 | Deferred P2：不属于本地 Automation Center 当前发布目标 |
 | Windows/Linux Desktop 实机 | CI 在两 OS 执行质量门；无两台原生桌面环境 | GitHub Actions（发布前） | NOT RUN（不能用 CI 冒充 GUI E2E） |
 
-## 发布前剩余硬门槛
+## 发布结果与稳定版后续
 
-1. 推送分支并等待三平台 CI + 三个 DSH tag 安装矩阵。
-2. 合入 `main`，创建 GitHub prerelease，回读 tarball/checksum/SBOM/attestation；npm 仅在 Trusted Publisher 成功时记为完成。
-3. 稳定版前另做 Desktop 卸载/恢复、真实进程强杀以及 Windows/Linux 原生 GUI；这些不阻塞 Alpha.7 prerelease。
+1. **GitHub Alpha.7 prerelease 已完成。** PR/main 三平台 CI 与三个 DSH tag 安装矩阵通过；tag、tgz、checksum、SPDX SBOM 和 attestation 已回读。
+2. **npm 发布因权限阻塞。** Trusted Publishing 在最终 PUT 返回 E404，官方 registry 无 `0.1.0-alpha.7`；按发布授权边界不再使用本机身份补发，README 改为 GitHub tgz 安装。
+3. **稳定版仍需后续门槛。** Desktop 卸载/恢复、真实进程强杀、path-prefix/inventory 故障注入以及 Windows/Linux 原生 GUI 未完成；这些不回写为 Alpha.7 prerelease 失败。

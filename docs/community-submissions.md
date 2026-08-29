@@ -9,7 +9,7 @@ This file prepares the ecosystem submissions without claiming they have already 
 - Repository: `https://github.com/usersx/dsh-automation-center`
 - Summary: Scheduled, auditable DeepSeek Harness Agent runs with fresh Result Sessions; works on stock DSH 0.1.0-rc.8 through 0.1.2-alpha.1 and automatically enables a global center when Shell slots are available.
 - License: MIT
-- Install: `dsh plugin --profile web add dsh-automation-center@latest`
+- Install: download the fixed tgz from [`v0.1.0-alpha.7`](https://github.com/usersx/dsh-automation-center/releases/tag/v0.1.0-alpha.7), then run `dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.7.tgz`
 - Evidence: CI, acceptance record, fixed npm version, SBOM and GitHub/Sigstore build-attestation links. Add an npm provenance link only after it is observed on the registry.
 
 ## awesome-dsh-plugin
