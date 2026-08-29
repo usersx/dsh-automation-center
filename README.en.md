@@ -111,7 +111,7 @@ The Host-side `AutomationEngine` is the deep module. Both Client adapters, authe
 | stock DSH `0.1.0-rc.8` / Web | no patch | global Settings section + Conversation shortcut | alpha.6 full Web end-to-end pass |
 | stock DSH `0.1.1-rc.2` / Web | no patch | global Settings section + Conversation shortcut | fixed npm install, Host/Client activation, no-Workspace empty state and browser-console checks pass; full Agent Run not repeated |
 | stock DSH `0.1.2-alpha.1` / Web | no patch | global Settings section + Conversation shortcut | Alpha.7 local tarball install, Host/Client, create/run, failed terminal, Result Session and Attention readback pass; successful real-model Run awaits final acceptance |
-| macOS DSH Desktop `2.0.1` | no patch | global Settings section + Conversation shortcut | alpha.6 real-model end-to-end and three cold starts pass; this is not an rc.2 Desktop result |
+| macOS DSH Desktop `2.0.3` (bundled DSH `0.1.1-rc.2`) | no patch | global Settings section + Conversation shortcut | Alpha.7 final tarball upgrade, successful real-model Run, structured Outcome, Result Session, and three cold starts pass |
 | DSH exposing both Shell slots / Web | same package | global root page | observed pass |
 | native Windows / Linux Desktop | — | selected from target capability | not yet observed |
 
@@ -153,7 +153,7 @@ CI runs typecheck, tests, build and repository validation on Linux, macOS and Wi
 ## Known limitations
 
 - Stock DSH `0.1.2-alpha.1` provides global management in Settings; a Sidebar root action still requires the two generic upstream slots.
-- The `0.1.2-alpha.1` Web Alpha.7 local artifact passes install, activation, RPC, and failure-path checks; successful real-model and Desktop results remain governed by the Alpha.7 acceptance record.
+- The `0.1.2-alpha.1` Web Alpha.7 final artifact passes install, activation, RPC, direct/worktree failure-path, and Result Session checks; macOS Desktop 2.0.3 passes an Alpha.7 real-model Run and three cold starts.
 - The first release has no distributed scheduler, remote workers or cloud credential vault.
 - Cancellation cannot undo file changes or external calls that already occurred.
 - This remains an Alpha; stable release gates are defined in the acceptance documents.

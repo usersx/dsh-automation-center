@@ -138,7 +138,7 @@ Automation Center ──RPC──▶ AutomationEngine ──▶ Definition / Run
 | 原版 DSH `0.1.0-rc.8` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.6 完整 Web 端到端通过 |
 | 原版 DSH `0.1.1-rc.2` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | npm 固定版本安装、Host/Client 激活、无 Workspace 空状态和浏览器 console 验收通过；完整 Agent Run 未重复执行 |
 | 原版 DSH `0.1.2-alpha.1` / Web | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.7 本地 tarball 安装、Host/Client、创建/运行、失败终态、Result Session 与 Attention readback 通过；真实模型成功 Run 待最终验收 |
-| macOS DSH Desktop `2.0.1` | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.6 真实模型端到端与三次冷启动通过；不等同于 rc.2 Desktop 验收 |
+| macOS DSH Desktop `2.0.3`（内置 DSH `0.1.1-rc.2`） | 无需 Patch | Settings 全局页 + Session 快捷标签 | Alpha.7 最终 tgz 升级、真实模型成功 Run、结构化 Outcome、Result Session 与三次冷启动通过 |
 | 提供两个 Shell Slot 的 DSH / Web | 无需插件改动 | 全局根入口和独立页面 | 已观察通过 |
 | Windows / Linux 原生 Desktop | — | 随目标 DSH 能力自动选择 | 尚未实机验收 |
 
@@ -201,7 +201,7 @@ dsh plugin --profile web add ./dsh-automation-center-0.1.0-alpha.7.tgz
 ## 已知限制
 
 - 原版 DSH `0.1.2-alpha.1` 可在 Settings 提供全局管理页，但左侧栏一级入口仍需要上游提供两个通用 Shell Slot。
-- `0.1.2-alpha.1` Web 已完成 Alpha.7 本地制品的安装、激活、RPC 与失败链路验收；真实模型成功 Run 与 Desktop 以 Alpha.7 验收记录为准。
+- `0.1.2-alpha.1` Web 已完成 Alpha.7 最终制品的安装、激活、RPC、direct/worktree 失败链路与 Result Session 验收；macOS Desktop 2.0.3 已完成 Alpha.7 真实模型成功 Run 与三次冷启动。
 - 第一版不提供分布式 Scheduler、远程执行节点或云端凭证托管。
 - 取消不会撤销已经发生的文件修改或外部调用。
 - 当前仍是 Alpha；稳定版发布条件以验收文档为准。
