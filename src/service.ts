@@ -413,6 +413,10 @@ export class AutomationService {
         return { ...stored, replayed: true }
       }
 
+      // Preserve the durable target before the mutation. A Host stop after a
+      // legacy Definition delete but before the final Receipt must still keep
+      // the source record tombstoned on the next open.
+      let entityId = command.kind === 'delete' ? command.automationId : undefined
       // Reserve the id before applying the mutation. If the Host stops after
       // the write but before the final receipt, a replay returns `unknown`
       // and reconciles from storage instead of applying the command twice.
@@ -420,6 +424,7 @@ export class AutomationService {
         requestId,
         command: command.kind,
         outcome: 'unknown',
+        ...(entityId === undefined ? {} : { entityId }),
         appliedAt: toIso(),
         error: {
           code: 'result_unknown',
@@ -430,7 +435,6 @@ export class AutomationService {
       }
       await this.receipts.put(receiptKey, provisional)
 
-      let entityId: string | undefined
       let revision: number | undefined
       let outcome: AutomationCommandReceipt['outcome'] = 'committed'
       let error: AutomationCommandReceipt['error']
@@ -743,6 +747,7 @@ export class AutomationService {
       let importedRuns = 0
       const defaultTimeout = Math.max(1, Math.round(this.config.runTimeoutMs / 60_000))
       for (const [id, old] of oldDefinitions.entries()) {
+        if (this.hasLegacyDeleteTombstone(id)) continue
         const modelPolicy = old.provider !== null && old.model !== null
           ? { mode: 'pinned' as const, provider: old.provider, model: old.model }
           : { mode: 'inherit' as const }
@@ -787,6 +792,15 @@ export class AutomationService {
     } finally {
       await legacy.close()
     }
+  }
+
+  /** A committed or ambiguous delete wins over the immutable legacy source. */
+  private hasLegacyDeleteTombstone(automationId: string): boolean {
+    return [...this.receipts.entries()].some(([, receipt]) => (
+      receipt.command === 'delete'
+      && receipt.entityId === automationId
+      && (receipt.outcome === 'committed' || receipt.outcome === 'unknown')
+    ))
   }
 
   private requestPump(): void {

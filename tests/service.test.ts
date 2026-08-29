@@ -47,6 +47,7 @@ class MemoryDomain {
     this.definitions = new MemoryTable(new Map(definitions.map(value => [value.id, value])), writable)
     this.runs = new MemoryTable(new Map(runs.map(value => [value.id, value])), writable)
   }
+  reopen(): void { this.closed = false }
   table(name: 'definitions' | 'runs' | 'receipts'): MemoryTable<AutomationDefinition> | MemoryTable<AutomationRun> | MemoryTable<unknown> {
     return name === 'definitions' ? this.definitions : name === 'runs' ? this.runs : this.receipts
   }
@@ -95,6 +96,7 @@ async function harness(seed?: {
   archivedSessionIds: string[]
   warnings: string[]
   removeSourceAgent(): void
+  reopenService(): Promise<AutomationService>
 }> {
   const domain = new MemoryDomain(seed?.definitions, seed?.runs)
   const legacyDefinitions = new MemoryTable(new Map((seed?.legacyDefinitions ?? []).map(value => [value.id, value])))
@@ -150,7 +152,11 @@ async function harness(seed?: {
     cancel: () => {},
   }
   const ctx = {
-    storageDomain: { open: async (spec: { name: string }) => spec.name === 'dsh_automation' ? legacyDomain : domain },
+    storageDomain: { open: async (spec: { name: string }) => {
+      if (spec.name === 'dsh_automation') return legacyDomain
+      domain.reopen()
+      return domain
+    } },
     workspaceRegistry: {
       get archivedSessionIds() { return archivedSessionIds },
       list: () => [workspace, otherWorkspace],
@@ -215,13 +221,16 @@ async function harness(seed?: {
     sessions: { flush: async () => true },
     logger: { warn: (message: string) => { warnings.push(message) } },
   }
-  const service = await AutomationService.open(ctx as never, { ...defaults, ...seed?.config })
+  const config = { ...defaults, ...seed?.config }
+  const reopenService = () => AutomationService.open(ctx as never, config)
+  const service = await reopenService()
   return {
     service,
     domain,
     archivedSessionIds,
     warnings,
     removeSourceAgent: () => { liveSourceAgent = undefined },
+    reopenService,
   }
 }
 
@@ -346,6 +355,30 @@ test('legacy definitions and runs import once while source records remain unchan
   assert.equal('runTimeoutMinutes' in legacyDefinition, false)
   assert.equal('runTimeoutMinutes' in legacyRun.targetSnapshot, false)
   await service.dispose()
+})
+
+test('a committed legacy delete remains deleted after the service reopens', async () => {
+  const current = storedDefinition('2026-08-13T00:00:00.000Z')
+  const { runTimeoutMinutes: _definitionTimeout, ...legacyDefinition } = current
+  const fixture = await harness({
+    legacyDefinitions: [legacyDefinition as unknown as LegacyDefinition],
+  })
+
+  const receipt = await fixture.service.dispatch(scope, {
+    kind: 'delete', requestId: 'delete-imported-once', automationId: current.id,
+  })
+  assert.equal(receipt.outcome, 'committed')
+  await fixture.service.dispose()
+
+  const reopened = await fixture.reopenService()
+  try {
+    const snapshot = await reopened.snapshot(scope)
+    assert.equal(snapshot.definitions.some(definition => definition.id === current.id), false)
+    assert.equal(snapshot.migration.detectedDefinitions, 1)
+    assert.equal(snapshot.migration.importedDefinitions, 0)
+  } finally {
+    await reopened.dispose()
+  }
 })
 
 test('a queued run can be cancelled once and remains auditable', async () => {
