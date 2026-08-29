@@ -74,12 +74,6 @@ jobs:
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: ${{ steps.pack.outputs.tarball }}
-      - name: Publish to npm with provenance
-        if: steps.registry.outputs.publish == 'true'
-        # npm treats a bare path beginning with `dist/` as a package spec in
-        # recent releases. Prefix the artifact with `./` so it is always the
-        # tarball produced by the verified pack step.
-        run: npm publish "./${{ steps.pack.outputs.tarball }}" --access public --tag latest --provenance
       - name: Attach package, checksum, and SBOM to the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,3 +85,12 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 90
+      - name: Publish to npm with provenance
+        if: steps.registry.outputs.publish == 'true'
+        # GitHub assets and Actions evidence are durable before this optional
+        # external publication. A missing npm Trusted Publisher must not leave
+        # the GitHub Release without its verified artifacts.
+        # npm treats a bare path beginning with `dist/` as a package spec in
+        # recent releases. Prefix the artifact with `./` so it is always the
+        # tarball produced by the verified pack step.
+        run: npm publish "./${{ steps.pack.outputs.tarball }}" --access public --tag latest --provenance
