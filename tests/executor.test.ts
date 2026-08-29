@@ -45,6 +45,8 @@ function executorFixture(options: {
   let followedUp = false
   let cancelled = false
   let renamedTitle: string | undefined
+  const attachedSessions: string[] = []
+  let createdCwd: string | undefined
   const lifecycle: string[] = []
   let settleIdle = () => {}
   const hangingIdle = new Promise<void>(resolve => { settleIdle = resolve })
@@ -83,7 +85,7 @@ function executorFixture(options: {
   const workspace = {
     path: '/workspace/repo',
     status: async () => 'ok' as const,
-    attachSession: async () => {},
+    attachSession: async (sessionId: string) => { attachedSessions.push(sessionId) },
   }
   const ctx = {
     workspaceRegistry: { get: () => workspace },
@@ -91,7 +93,8 @@ function executorFixture(options: {
     agentPresets: { mount: async () => {} },
     agents: {
       withoutInitiator: (operation: () => unknown) => operation(),
-      create: async (input: { setup: (ctx: unknown) => Promise<void> }) => {
+      create: async (input: { setup: (ctx: unknown) => Promise<void>; meta: { cwd: string } }) => {
+        createdCwd = input.meta.cwd
         await input.setup({
           agent,
           tools: {
@@ -128,6 +131,8 @@ function executorFixture(options: {
     wasCancelled: () => cancelled,
     renamedTitle: () => renamedTitle,
     lifecycle: () => lifecycle,
+    attachedSessions: () => attachedSessions,
+    createdCwd: () => createdCwd,
   }
 }
 
@@ -213,6 +218,25 @@ test('executor pins the fresh Result Session to the automation task name before 
   assert.equal(completion.status, 'succeeded')
   assert.equal(fixture.renamedTitle(), 'Executor test')
   assert.deepEqual(fixture.lifecycle().slice(0, 2), ['rename', 'followup'])
+  assert.equal(fixture.createdCwd(), '/workspace/repo')
+  assert.deepEqual(fixture.attachedSessions(), ['dsh-automation-session-title'])
+})
+
+test('executor preserves truthful worktree cwd without attaching it to the source Workspace', async () => {
+  const fixture = executorFixture({ reportOutcome: 'no_change' })
+  const completion = await executeAutomationRun(
+    fixture.ctx as never,
+    fixture.definition,
+    fixture.run,
+    {
+      runTimeoutMs: 1_000,
+      sessionId: 'dsh-automation-session-worktree',
+      executionCwd: '/tmp/dsh-automation-review-test/worktree',
+    },
+  )
+  assert.equal(completion.status, 'succeeded')
+  assert.equal(fixture.createdCwd(), '/tmp/dsh-automation-review-test/worktree')
+  assert.deepEqual(fixture.attachedSessions(), [])
 })
 
 test('executor timeout cancels a stuck Agent, settles, and removes its abort listener', async () => {

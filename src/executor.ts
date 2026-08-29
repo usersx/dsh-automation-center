@@ -292,7 +292,12 @@ export async function executeAutomationRun(
     // A user-source title prevents the normal first-prompt provider from
     // replacing it with a workspace or generated fallback later in the run.
     ctx.sessionTitle.rename(handle.agent.session, definition.name)
-    await workspace.attachSession(sessionId)
+    // A worktree Session truthfully owns the isolated cwd. DSH Workspace
+    // membership validates the Session header's exact physical directory, so
+    // forcing it into the source Workspace would fail (or falsify provenance).
+    // The Automation Run retains the source workspace identity and direct
+    // Result Session link; direct-mode Sessions keep normal Workspace attach.
+    if (executionCwd === target.cwd) await workspace.attachSession(sessionId)
     const firstSeq = handle.agent.session.seq
     await config.onPhase?.('executing', true)
     handle.agent.followup(createUserMessage({
