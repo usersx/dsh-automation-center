@@ -102,6 +102,19 @@ export interface AutomationModelOption extends AutomationModelSelection {
 }
 
 export interface AutomationHealth {
+  readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled'
+  readonly issues: readonly { readonly code: string; readonly message: string }[]
+  readonly effectiveModel: AutomationModelSelection | null
+  readonly expectedAt: string | null
+  readonly admittedAt: string | null
+  readonly claimedAt: string | null
+  readonly lastProgressAt: string | null
+  readonly overdueByMs: number
+  readonly queueWaitMs: number | null
+  readonly admissionStatus: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal'
+}
+
+interface TargetHealth {
   readonly status: 'ready' | 'blocked'
   readonly issues: readonly { readonly code: string; readonly message: string }[]
   readonly effectiveModel: AutomationModelSelection | null
@@ -249,7 +262,7 @@ export class AutomationService {
       }))
       const defaultModel = this.defaultModelSelection()
       const models = await this.modelCatalog(signal)
-      const health = new Map(await Promise.all(definitions.map(async definition => (
+      const targetHealth = new Map(await Promise.all(definitions.map(async definition => (
         [definition.id, await this.preflightTarget(definition, signal)] as const
       ))))
       return {
@@ -263,9 +276,14 @@ export class AutomationService {
           ...definition,
           nextRunAt: definition.status === 'active' ? nextOccurrence(definition.schedule, generatedAt) : null,
           lastRun: workspaceRuns.find(run => run.automationId === definition.id) ?? null,
-          health: health.get(definition.id) ?? {
+          health: this.deriveAutomationHealth(
+            definition,
+            workspaceRuns.filter(run => run.automationId === definition.id),
+            targetHealth.get(definition.id) ?? {
             status: 'blocked', issues: [{ code: 'preflight_unavailable', message: 'Preflight did not complete.' }], effectiveModel: null,
-          },
+            },
+            generatedAt,
+          ),
         })),
         runs,
         migration: this.migration,
@@ -687,7 +705,7 @@ export class AutomationService {
   private async preflightTarget(
     target: Pick<AutomationDefinition, 'workspaceId' | 'cwd' | 'agentPreset' | 'modelPolicy'>,
     signal?: AbortSignal,
-  ): Promise<AutomationHealth> {
+  ): Promise<TargetHealth> {
     const issues: Array<{ readonly code: string; readonly message: string }> = []
     const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(target.workspaceId))
     if (workspace === undefined) {
@@ -737,6 +755,99 @@ export class AutomationService {
     return { status: issues.length === 0 ? 'ready' : 'blocked', issues, effectiveModel }
   }
 
+  /** Derive scheduler health from the existing Definition and Run facts. */
+  private deriveAutomationHealth(
+    definition: AutomationDefinition,
+    relatedRuns: readonly AutomationRun[],
+    target: TargetHealth,
+    now: string,
+  ): AutomationHealth {
+    const expectedCandidate = definition.status === 'active'
+      ? latestDueOccurrence(definition.schedule, now)
+      : null
+    const expectedAt = expectedCandidate !== null
+      && Date.parse(expectedCandidate) > Date.parse(definition.updatedAt)
+      ? expectedCandidate
+      : null
+    const expectedRun = expectedAt === null ? undefined : relatedRuns.find(run => (
+      run.trigger === 'schedule' && run.scheduledFor === expectedAt
+    ))
+    const latestRun = [...relatedRuns].sort(compareRuns)[0]
+    const progressRun = expectedRun ?? latestRun
+    const lastProgressAt = progressRun === undefined
+      ? null
+      : progressRun.finishedAt
+        ?? progressRun.lease?.heartbeatAt
+        ?? progressRun.startedAt
+        ?? progressRun.admittedAt
+    const admissionStatus: AutomationHealth['admissionStatus'] = expectedAt === null
+      ? 'not_due'
+      : expectedRun === undefined
+        ? 'not_admitted'
+        : expectedRun.status === 'queued'
+          ? 'queued'
+          : expectedRun.status === 'running'
+            ? 'running'
+            : 'terminal'
+    const overdueThresholdMs = Math.max(60_000, Math.min(5 * 60_000, this.config.misfireGraceMs || 60_000))
+    const overdueByMs = expectedAt === null || expectedRun !== undefined
+      ? 0
+      : Math.max(0, Date.parse(now) - Date.parse(expectedAt))
+    const staleByMs = progressRun?.status === 'running' && lastProgressAt !== null
+      ? Math.max(0, Date.parse(now) - Date.parse(lastProgressAt))
+      : 0
+    const queueWaitMs = progressRun === undefined
+      ? null
+      : Math.max(0, Date.parse(progressRun.startedAt ?? now) - Date.parse(progressRun.admittedAt))
+    if (target.status === 'blocked') {
+      return {
+        ...target, expectedAt, admittedAt: expectedRun?.admittedAt ?? null,
+        claimedAt: expectedRun?.startedAt ?? null, lastProgressAt, overdueByMs, queueWaitMs, admissionStatus,
+      }
+    }
+    if (overdueByMs > overdueThresholdMs) {
+      return {
+        ...target,
+        status: 'overdue',
+        issues: [{
+          code: 'occurrence_overdue',
+          message: `The occurrence expected at ${expectedAt} has not been admitted.`,
+        }],
+        expectedAt, admittedAt: null, claimedAt: null, lastProgressAt,
+        overdueByMs, queueWaitMs: null, admissionStatus,
+      }
+    }
+    if (progressRun?.status === 'queued' && queueWaitMs !== null && queueWaitMs > overdueThresholdMs) {
+      return {
+        ...target,
+        status: 'stalled',
+        issues: [{
+          code: 'queue_stalled',
+          message: `The admitted run has waited ${Math.round(queueWaitMs / 1_000)} seconds without being claimed.`,
+        }],
+        expectedAt, admittedAt: progressRun.admittedAt, claimedAt: null,
+        lastProgressAt, overdueByMs: queueWaitMs, queueWaitMs, admissionStatus,
+      }
+    }
+    if (progressRun?.status === 'running' && staleByMs > RUN_LEASE_MS) {
+      return {
+        ...target,
+        status: 'stalled',
+        issues: [{
+          code: 'run_stalled',
+          message: `The run has made no durable progress since ${lastProgressAt}.`,
+        }],
+        expectedAt, admittedAt: progressRun.admittedAt, claimedAt: progressRun.startedAt,
+        lastProgressAt, overdueByMs: staleByMs, queueWaitMs, admissionStatus,
+      }
+    }
+    return {
+      ...target, expectedAt, admittedAt: expectedRun?.admittedAt ?? null,
+      claimedAt: expectedRun?.startedAt ?? null, lastProgressAt,
+      overdueByMs: 0, queueWaitMs, admissionStatus,
+    }
+  }
+
   /** Import the old plugin's v1 domain without ever mutating or deleting it. */
   private async importLegacyData(): Promise<LegacyMigrationSummary> {
     const legacy = await this.ctx.storageDomain.open(legacyAutomationDomainSpec)
@@ -768,6 +879,7 @@ export class AutomationService {
           : { mode: 'inherit' as const }
         const converted: AutomationRun = {
           ...old,
+          admittedAt: old.scheduledFor,
           targetSnapshot: { ...old.targetSnapshot, modelPolicy, runTimeoutMinutes: defaultTimeout },
           phase: old.status === 'queued' ? 'claim' : old.status === 'running' ? 'executing' : null,
           lease: null,
@@ -847,7 +959,7 @@ export class AutomationService {
     const related = [...this.runs.entries()].map(([, run]) => run)
       .filter(run => run.automationId === definition.id)
     if (related.some(run => run.trigger === 'schedule' && run.scheduledFor === scheduledFor)) return
-    const candidate = createScheduledRun(definition, scheduledFor)
+    const candidate = { ...createScheduledRun(definition, scheduledFor), admittedAt: now }
     if (this.runs.get(candidate.id) !== undefined) return
     const overlapping = related.some(run => run.status === 'queued' || run.status === 'running')
     const age = Date.parse(now) - Date.parse(scheduledFor)

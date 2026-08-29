@@ -378,8 +378,8 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
                   ? t('card.modelInherit')
                   : `${automation.modelPolicy.provider}/${automation.modelPolicy.model}`}
               </span>
-              {automation.health.status === 'blocked' && (
-                <span className="dsh-automation-health-badge">{t('card.blocked')}</span>
+              {automation.health.status !== 'ready' && (
+                <span className="dsh-automation-health-badge">{t(`card.health.${automation.health.status}`)}</span>
               )}
             </div>
           </div>
@@ -388,7 +388,7 @@ function AutomationCard(props: AutomationCardProps): JSX.Element {
       </div>
 
       <p className="dsh-automation-prompt">{automation.prompt}</p>
-      {automation.health.status === 'blocked' && (
+      {automation.health.status !== 'ready' && (
         <div className="dsh-automation-health" role="status">
           <AlertIcon />
           <span>{automation.health.issues.map(issue => issue.message).join(' ')}</span>

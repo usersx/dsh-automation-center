@@ -110,6 +110,7 @@ const automationRunShape = z.object({
   occurrenceKey: nonBlank,
   trigger: z.enum(['schedule', 'manual']),
   scheduledFor: instant,
+  admittedAt: instant,
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'skipped', 'cancelled', 'interrupted']),
   phase: runPhase.nullable(),
   lease: z.object({
@@ -140,6 +141,7 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
   const status = record.status
   return {
     ...record,
+    admittedAt: record.admittedAt ?? record.scheduledFor,
     phase: record.phase ?? (status === 'queued' ? 'claim' : status === 'running' ? 'executing' : null),
     lease: record.lease ?? null,
     effectiveModel: record.effectiveModel ?? null,
@@ -301,6 +303,7 @@ function queuedRun(
     occurrenceKey: key,
     trigger,
     scheduledFor,
+    admittedAt: scheduledFor,
     status: 'queued',
     phase: 'claim',
     lease: null,

@@ -126,6 +126,8 @@ export interface AutomationRun {
   readonly occurrenceKey: string
   readonly trigger: 'schedule' | 'manual'
   readonly scheduledFor: string
+  /** Durable admission time, distinct from the planned occurrence. */
+  readonly admittedAt: string
   readonly status: AutomationRunStatus
   readonly phase: AutomationRunPhase | null
   readonly lease: AutomationRunLease | null

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createDefinition, createManualRun } from '../src/domain.ts'
+import { createDefinition, createManualRun, createScheduledRun } from '../src/domain.ts'
 import { AutomationService, type AutomationConfig } from '../src/service.ts'
 import type { LegacyDefinition, LegacyRun } from '../src/legacy.ts'
 import type { AutomationDefinition, AutomationRun } from '../src/types.ts'
@@ -431,6 +431,90 @@ test('snapshot exposes model catalog and structured health without starting a ru
   assert.equal(snapshot.definitions[0]?.health.status, 'blocked')
   assert.equal(snapshot.definitions[0]?.health.issues[0]?.code, 'model_unavailable')
   await service.dispose()
+})
+
+test('snapshot derives an overdue occurrence when no scheduled run was admitted', async (context) => {
+  const now = Date.parse('2026-08-13T00:06:00Z')
+  context.mock.timers.enable({ apis: ['Date'], now })
+  const definition = createDefinition({
+    id: 'automation-overdue',
+    name: 'Overdue task',
+    prompt: 'Return one bounded result.',
+    schedule: { kind: 'daily', time: '00:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    createdBy: { kind: 'web', sessionId: scope.sessionId },
+    now: '2026-08-12T23:00:00Z',
+  })
+  const { service } = await harness({ definitions: [definition] })
+  try {
+    const health = (await service.snapshot(scope)).definitions[0]!.health
+    assert.equal(health.status, 'overdue')
+    assert.equal(health.expectedAt, '2026-08-13T00:00:00.000Z')
+    assert.equal(health.admissionStatus, 'not_admitted')
+    assert.equal(health.overdueByMs, 6 * 60_000)
+    assert.equal(health.issues[0]?.code, 'occurrence_overdue')
+  } finally {
+    await service.dispose()
+  }
+})
+
+test('snapshot separates scheduled admission from queue wait and execution claim', async (context) => {
+  const now = Date.parse('2026-08-13T00:02:00Z')
+  context.mock.timers.enable({ apis: ['Date'], now })
+  const definition = createDefinition({
+    id: 'automation-admitted',
+    name: 'Admitted task',
+    prompt: 'Return one bounded result.',
+    schedule: { kind: 'daily', time: '00:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    createdBy: { kind: 'web', sessionId: scope.sessionId },
+    now: '2026-08-12T23:00:00Z',
+  })
+  const queued = {
+    ...createScheduledRun(definition, '2026-08-13T00:00:00Z'),
+    admittedAt: '2026-08-13T00:00:30Z',
+  }
+  const { service } = await harness({ definitions: [definition], runs: [queued] })
+  try {
+    const snapshot = await service.snapshot(scope)
+    const health = snapshot.definitions[0]!.health
+    assert.equal(health.status, 'ready')
+    assert.equal(health.admissionStatus, 'queued')
+    assert.equal(health.admittedAt, queued.admittedAt)
+    assert.equal(health.claimedAt, null)
+    assert.equal(health.queueWaitMs, 90_000)
+    assert.equal(snapshot.runs[0]?.admittedAt, queued.admittedAt)
+  } finally {
+    await service.dispose()
+  }
+})
+
+test('snapshot reports a queued run that was admitted but never claimed', async (context) => {
+  const now = Date.parse('2026-08-13T00:07:00Z')
+  context.mock.timers.enable({ apis: ['Date'], now })
+  const definition = createDefinition({
+    id: 'automation-queue-stalled',
+    name: 'Queue stalled task',
+    prompt: 'Return one bounded result.',
+    schedule: { kind: 'daily', time: '00:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: '/workspace/repo', agentPreset: 'standard',
+    createdBy: { kind: 'web', sessionId: scope.sessionId },
+    now: '2026-08-12T23:00:00Z',
+  })
+  const queued = {
+    ...createScheduledRun(definition, '2026-08-13T00:00:00Z'),
+    admittedAt: '2026-08-13T00:00:30Z',
+  }
+  const { service } = await harness({ definitions: [definition], runs: [queued] })
+  try {
+    const health = (await service.snapshot(scope)).definitions[0]!.health
+    assert.equal(health.status, 'stalled')
+    assert.equal(health.admissionStatus, 'queued')
+    assert.equal(health.issues[0]?.code, 'queue_stalled')
+    assert.equal(health.queueWaitMs, 390_000)
+  } finally {
+    await service.dispose()
+  }
 })
 
 test('run preflight blocks an unavailable model before creating a Result Session', async () => {

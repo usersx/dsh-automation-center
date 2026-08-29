@@ -45,9 +45,16 @@ export interface AutomationViewModel {
   readonly agentPreset: string
   readonly modelPolicy: AutomationModelPolicy
   readonly health: {
-    readonly status: 'ready' | 'blocked'
+    readonly status: 'ready' | 'blocked' | 'overdue' | 'stalled'
     readonly issues: readonly { readonly code: string; readonly message: string }[]
     readonly effectiveModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
+    readonly expectedAt?: string | null
+    readonly admittedAt?: string | null
+    readonly claimedAt?: string | null
+    readonly lastProgressAt?: string | null
+    readonly overdueByMs?: number
+    readonly queueWaitMs?: number | null
+    readonly admissionStatus?: 'not_due' | 'not_admitted' | 'queued' | 'running' | 'terminal'
   }
   readonly runTimeoutMinutes: number
   readonly nextRunAt?: string
@@ -69,6 +76,7 @@ export interface AutomationRunViewModel {
   readonly effectiveModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }
   readonly trigger: 'schedule' | 'manual' | 'catch-up'
   readonly scheduledFor: string
+  readonly admittedAt?: string
   readonly startedAt?: string
   readonly finishedAt?: string
   readonly sessionId?: string
