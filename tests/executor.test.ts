@@ -49,6 +49,8 @@ function executorFixture(options: {
   let settleIdle = () => {}
   const hangingIdle = new Promise<void>(resolve => { settleIdle = resolve })
   let outcomeTool: { execute(args: { outcome: string }, exec: unknown): Promise<unknown> } | undefined
+  const registeredTools: Array<{ name: string; execute?: (args: { outcome: string }, exec: unknown) => Promise<unknown> }> = []
+  let allowedGlobal: readonly string[] | undefined
   let outcomePromise = Promise.resolve()
   const session = { seq: 0, events: [] as Array<{ seq: number; type: string; data: Record<string, unknown> }> }
   const agent = {
@@ -95,9 +97,18 @@ function executorFixture(options: {
           tools: {
             guard: () => {},
             register: (definition: unknown) => {
-              outcomeTool = definition as typeof outcomeTool
+              const tool = definition as typeof registeredTools[number]
+              registeredTools.push(tool)
+              outcomeTool = tool as typeof outcomeTool
               return () => {}
             },
+            schemas: () => [
+              { name: 'read' }, { name: 'automation_create' }, { name: 'mcp__strict__write' },
+              ...registeredTools.map(tool => ({ name: tool.name })),
+            ].filter(schema => allowedGlobal === undefined
+              || schema.name === 'automation_report_outcome'
+              || allowedGlobal.includes(schema.name)),
+            restrict: ({ allow }: { allow: readonly string[] }) => { allowedGlobal = allow },
           },
         })
         return { agent, dispose: async () => {} }
@@ -168,6 +179,7 @@ test('executor persists an explicit machine-readable outcome without parsing pro
   assert.equal(completion.status, 'succeeded')
   assert.equal(completion.outcome, 'no_change')
   assert.equal(completion.attention, 'none')
+  assert.deepEqual(completion.effectiveTools, ['automation_report_outcome', 'read'])
 })
 
 test('executor honors a complete pinned model policy instead of the live default', async () => {

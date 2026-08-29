@@ -187,7 +187,19 @@ async function harness(seed?: {
       withoutInitiator: (task: () => unknown) => task(),
       create: async (input: { setup: (ctx: unknown) => Promise<void> }) => {
         if (!seed?.completeRuns) throw new Error('executor is not expected in service unit tests')
-        await input.setup({ agent: runAgent, tools: { guard: () => {}, register: () => () => {} } })
+        const registered: Array<{ name: string }> = []
+        let allow: readonly string[] | undefined
+        await input.setup({
+          agent: runAgent,
+          tools: {
+            guard: () => {},
+            register: (tool: { name: string }) => { registered.push(tool); return () => {} },
+            schemas: () => [
+              { name: 'read' }, { name: 'automation_create' }, { name: 'mcp__strict__write' }, ...registered,
+            ].filter(tool => allow === undefined || tool.name === 'automation_report_outcome' || allow.includes(tool.name)),
+            restrict: (filter: { allow: readonly string[] }) => { allow = filter.allow },
+          },
+        })
         return { agent: runAgent, dispose: async () => {} }
       },
     },

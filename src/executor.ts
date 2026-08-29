@@ -62,6 +62,7 @@ export interface RunCompletion {
   readonly outcome?: AutomationOutcome
   readonly attention?: AutomationAttention
   readonly cleanupIncomplete?: boolean
+  readonly effectiveTools?: readonly string[]
 }
 
 export interface ExecutorConfig {
@@ -231,6 +232,7 @@ export async function executeAutomationRun(
   let timeout: ReturnType<typeof setTimeout> | undefined
   let removeCancellationListener = () => {}
   let reportedOutcome: AutomationOutcome | undefined
+  let effectiveTools: readonly string[] | undefined
   let cleanupIncomplete = false
   const teardownGraceMs = config.teardownGraceMs ?? Math.min(5_000, Math.max(100, config.runTimeoutMs))
   try {
@@ -246,7 +248,6 @@ export async function executeAutomationRun(
         if (agent === undefined) throw new Error('automation setup has no scoped Agent')
         setSandboxMode(agent.session, target.permissionPreset)
         setApprovalPolicy(agent.session, 'never')
-        agentCtx.tools.guard((exec: ToolExecution) => unattendedToolGuardReason(exec.name, exec.arguments))
         agentCtx.tools.register(defineTool({
           name: 'automation_report_outcome',
           description: 'Report the structured outcome of this automation exactly once before the final response. Use no_change when no action is needed, changes_ready when changes or artifacts need review, needs_input when a person must answer, blocked when the task cannot proceed, partial for an incomplete but useful result, or succeeded for a completed informational task.',
@@ -266,6 +267,22 @@ export async function executeAutomationRun(
           },
           presentCall: () => ({ card: 'generic' as const, title: 'Report automation outcome', kind: 'read' as const }),
         }))
+        // Restrict the model-visible global catalog, not only execution. The
+        // scoped outcome tool remains visible because own-scope tools are not
+        // filtered by inherited-global restrictions.
+        const before = agentCtx.tools.schemas?.(agent) as readonly { readonly name: string }[] | undefined
+        if (before !== undefined && agentCtx.tools.restrict !== undefined) {
+          const allowedGlobal = before
+            .map(schema => schema.name)
+            .filter(name => name !== 'automation_report_outcome' && UNATTENDED_TOOL_ALLOWLIST.has(name))
+          agentCtx.tools.restrict({ allow: allowedGlobal })
+          effectiveTools = (agentCtx.tools.schemas(agent) as readonly { readonly name: string }[])
+            .map(schema => schema.name)
+            .sort()
+        } else {
+          effectiveTools = unattendedToolNames()
+        }
+        agentCtx.tools.guard((exec: ToolExecution) => unattendedToolGuardReason(exec.name, exec.arguments))
       },
     }))
     await handle.agent.whenIdle()
@@ -348,6 +365,7 @@ export async function executeAutomationRun(
       return {
         sessionId: String(sessionId), status: 'succeeded', effectiveModel,
         outcome: structuredOutcome, attention: outcomeAttention(structuredOutcome),
+        ...(effectiveTools === undefined ? {} : { effectiveTools }),
         ...(summary === undefined ? {} : { summary }),
       }
     }

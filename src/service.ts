@@ -1226,6 +1226,9 @@ export class AutomationService {
           },
       unread: terminalAttention !== 'none',
       effectiveModel: completion.effectiveModel ?? null,
+      effectiveContext: delivering.effectiveContext === null || completion.effectiveTools === undefined
+        ? delivering.effectiveContext
+        : { ...delivering.effectiveContext, tools: completion.effectiveTools },
     }
     await this.commitRun(completed, 'terminal')
     await this.archiveRunSession(completed)

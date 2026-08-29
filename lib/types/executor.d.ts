@@ -26,6 +26,7 @@ export interface RunCompletion {
     readonly outcome?: AutomationOutcome;
     readonly attention?: AutomationAttention;
     readonly cleanupIncomplete?: boolean;
+    readonly effectiveTools?: readonly string[];
 }
 export interface ExecutorConfig {
     readonly runTimeoutMs: number;
