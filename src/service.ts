@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-workspace'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import {
   automationDomainSpec,
+  automationRunIdentity,
   createDefinition,
   createManualRun,
   createScheduledRun,
@@ -24,7 +25,15 @@ import {
   type LegacyRun,
 } from './legacy.ts'
 import { latestDueOccurrence, nextOccurrence } from './recurrence.ts'
-import { acceptGitReview, collectGitReview, discardGitReview, keepGitReview, prepareGitReview } from './review.ts'
+import {
+  acceptGitReview,
+  beginGitReviewSettlement,
+  collectGitReview,
+  discardGitReview,
+  failGitReviewSettlement,
+  keepGitReview,
+  prepareGitReview,
+} from './review.ts'
 import type {
   AutomationDefinition,
   AutomationLifecycleEvent,
@@ -167,6 +176,8 @@ export class AutomationService {
   private requested = false
   private started = false
   private stopping = false
+  private disposed = false
+  private disposePromise: Promise<void> | undefined
   private readonly ownerId = `automation-host-${randomUUID()}`
   private readonly active = new Map<string, { readonly abort: AbortController; readonly promise: Promise<void> }>()
   private migration: LegacyMigrationSummary = {
@@ -195,6 +206,7 @@ export class AutomationService {
       service.receipts = domain.table('receipts') as KvTable<string, StoredAutomationCommandReceipt>
       service.migration = await service.importLegacyData()
       await service.recoverInterruptedRuns()
+      await service.recoverReviewSettlements()
       await service.archiveTerminalRunSessions()
       await service.pruneAllHistory()
       return service
@@ -227,18 +239,27 @@ export class AutomationService {
     })
   }
 
-  async dispose(): Promise<void> {
-    if (this.stopping) return
+  dispose(): Promise<void> {
+    if (this.disposed) return Promise.resolve()
+    if (this.disposePromise !== undefined) return this.disposePromise
     this.stopping = true
-    this.requested = false
-    this.clearTimer()
-    // A pump that was already admitted may be between durable writes. Drain
-    // it before taking the active-run snapshot so no late run escapes abort.
-    await this.operationTail.catch(() => {})
-    await this.commandTail.catch(() => {})
-    for (const { abort } of this.active.values()) abort.abort({ code: 'host_stopping' })
-    await Promise.allSettled([...this.active.values()].map(value => value.promise))
-    await this.domain.close()
+    const operation = (async () => {
+      this.requested = false
+      this.clearTimer()
+      // A pump that was already admitted may be between durable writes. Drain
+      // it before taking the active-run snapshot so no late run escapes abort.
+      await this.operationTail.catch(() => {})
+      await this.commandTail.catch(() => {})
+      for (const { abort } of this.active.values()) abort.abort({ code: 'host_stopping' })
+      await Promise.allSettled([...this.active.values()].map(value => value.promise))
+      await this.domain.close()
+      this.disposed = true
+    })()
+    this.disposePromise = operation.catch((error: unknown) => {
+      this.disposePromise = undefined
+      throw error
+    })
+    return this.disposePromise
   }
 
   async snapshot(scope: AutomationScope, signal?: AbortSignal): Promise<AutomationSnapshot> {
@@ -475,9 +496,12 @@ export class AutomationService {
         revision = applied.revision
       } catch (cause: unknown) {
         outcome = signal?.aborted === true ? 'unknown' : 'rejected'
+        const code = signal?.aborted === true ? 'result_unknown' : this.commandErrorCode(cause)
         error = {
-          code: signal?.aborted === true ? 'result_unknown' : this.commandErrorCode(cause),
-          message: asMessage(cause),
+          code,
+          message: signal?.aborted === true
+            ? 'The command may have committed, but its final result is unknown.'
+            : this.commandErrorMessage(code),
         }
       }
       const stored: StoredAutomationCommandReceipt = {
@@ -558,6 +582,20 @@ export class AutomationService {
     return 'invalid_command'
   }
 
+  private commandErrorMessage(code: string): string {
+    switch (code) {
+      case 'revision_conflict': return 'The automation changed since it was opened.'
+      case 'run_not_found': return 'The selected automation run no longer exists.'
+      case 'automation_not_found': return 'The selected automation no longer exists.'
+      case 'workspace_unavailable': return 'The selected workspace is unavailable.'
+      case 'preset_unavailable': return 'The selected Agent preset is unavailable.'
+      case 'model_unavailable': return 'The selected model is unavailable.'
+      case 'permission_denied': return 'The automation permission policy denied this command.'
+      case 'already_running': return 'The automation already has a queued or running run.'
+      default: return 'The automation command was rejected.'
+    }
+  }
+
   async markRead(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun> {
     return this.serialize(async () => {
       const run = this.runs.get(runId)
@@ -627,18 +665,34 @@ export class AutomationService {
       if (run.review === null || (run.review.status !== 'ready' && run.review.status !== 'kept')) {
         throw new Error('The automation run has no pending Git review.')
       }
-      const review = action === 'accept'
-        ? await acceptGitReview(run.targetSnapshot.cwd, run.review)
-        : action === 'discard'
-          ? await discardGitReview(run.targetSnapshot.cwd, run.review)
-          : keepGitReview(run.review)
-      const pending = review.status === 'kept'
-      return this.commitRun({
-        ...run,
-        review,
-        attention: pending ? 'review' : 'none',
-        unread: pending,
+      if (run.review.cleanup.status !== 'owned') {
+        throw new Error('The Git review cleanup is already settling or requires reconciliation.')
+      }
+      if (action === 'keep') {
+        const review = keepGitReview(run.review)
+        return this.commitRun({ ...run, review, attention: 'review', unread: true }, 'attention')
+      }
+      // Persist ownership before the first patch/cleanup side effect. Caller
+      // cancellation is intentionally ignored after this boundary; dispose()
+      // drains the serialized command, and a process restart resumes it.
+      const settlingReview = beginGitReviewSettlement(run.review, action, toIso())
+      const settlingRun = await this.commitRun({
+        ...run, review: settlingReview, attention: 'review', unread: true,
       }, 'attention')
+      try {
+        const review = action === 'accept'
+          ? await acceptGitReview(run.targetSnapshot.cwd, settlingReview)
+          : await discardGitReview(run.targetSnapshot.cwd, settlingReview)
+        return this.commitRun({
+          ...settlingRun, review, attention: 'none', unread: false,
+        }, 'attention')
+      } catch (error: unknown) {
+        const review = failGitReviewSettlement(settlingReview, error, toIso())
+        await this.commitRun({
+          ...settlingRun, review, attention: 'unknown', unread: true,
+        }, 'attention')
+        throw error
+      }
     }, signal)
   }
 
@@ -1232,6 +1286,7 @@ export class AutomationService {
         await this.commitRun({
           ...executingRun,
           status: 'failed', phase: null, lease: null, finishedAt,
+          sessionId: null,
           error: { code: 'review_setup_failed', message: asMessage(error) },
           outcome: 'blocked', attention: 'blocked', unread: true,
         }, 'terminal')
@@ -1358,6 +1413,7 @@ export class AutomationService {
       outcome: stored.outcome,
       attention: stored.attention,
       sessionId: stored.sessionId,
+      identity: automationRunIdentity(stored),
     }
     try {
       this.ctx.emit?.('automation/lifecycle', event)
@@ -1481,6 +1537,28 @@ export class AutomationService {
           : { ...run.effect, status: 'unknown', updatedAt: finishedAt },
         unread: true,
       }, 'reconciled')
+    }
+  }
+
+  /** Resume a review action whose durable owner crossed the side-effect boundary before a Host stop. */
+  private async recoverReviewSettlements(): Promise<void> {
+    for (const [, run] of this.runs.entries()) {
+      const review = run.review
+      if (review?.cleanup.status !== 'settling' || review.cleanup.action === null) continue
+      try {
+        const settled = review.cleanup.action === 'accept'
+          ? await acceptGitReview(run.targetSnapshot.cwd, review)
+          : await discardGitReview(run.targetSnapshot.cwd, review)
+        await this.commitRun({
+          ...run, review: settled, attention: 'none', unread: false,
+        }, 'reconciled')
+      } catch (error: unknown) {
+        const failed = failGitReviewSettlement(review, error, toIso())
+        await this.commitRun({
+          ...run, review: failed, attention: 'unknown', unread: true,
+        }, 'reconciled')
+        this.ctx.logger.warn(`dsh-automation: could not reconcile Git review for run '${run.id}': ${asMessage(error)}`)
+      }
     }
   }
 

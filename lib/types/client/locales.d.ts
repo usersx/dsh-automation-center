@@ -144,6 +144,8 @@ export declare const en: {
     readonly 'run.reviewAccept': "Accept";
     readonly 'run.reviewKeep': "Keep worktree";
     readonly 'run.reviewDiscard': "Discard";
+    readonly 'run.reviewSettling': "Review cleanup is settling";
+    readonly 'run.reviewCleanupUnknown': "Review cleanup needs reconciliation";
     readonly 'run.reviewAcceptConfirm': "Apply this patch to the clean source checkout?";
     readonly 'run.reviewDiscardConfirm': "Permanently discard this isolated worktree?";
     readonly 'outcome.pending': "Pending outcome";

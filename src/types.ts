@@ -148,6 +148,20 @@ export interface AutomationReviewState {
   readonly patchSha256: string | null
   readonly diffStat: string | null
   readonly error?: { readonly code: string; readonly message: string } | undefined
+  /** Durable ownership of the isolated worktree until cleanup has settled. */
+  readonly cleanup: {
+    readonly status: 'owned' | 'settling' | 'released' | 'unknown'
+    readonly action: 'accept' | 'discard' | null
+    readonly updatedAt: string
+  }
+}
+
+/** Stable, non-secret identity for replay, cache and lifecycle correlation. */
+export interface AutomationRunIdentity {
+  readonly automationId: string
+  readonly definitionRevision: number
+  readonly occurrenceKey: string
+  readonly workspaceId: string
 }
 
 export interface AutomationRun {
@@ -200,6 +214,7 @@ export interface AutomationLifecycleEvent {
   readonly outcome: AutomationOutcome
   readonly attention: AutomationAttention
   readonly sessionId: string | null
+  readonly identity: AutomationRunIdentity
 }
 
 export interface CreateAutomationInput {

@@ -50,10 +50,31 @@ test('snapshot marks archived run Sessions so the client never offers a broken o
         startedAt: '2026-08-17T00:00:01.000Z', finishedAt: '2026-08-17T00:00:02.000Z',
         sessionId: 'dsh-automation-session-archived', sessionArchived: true,
         summary: 'No regression found.', unread: false,
+        identity: {
+          automationId: 'automation-deleted', definitionRevision: 1,
+          occurrenceKey: 'manual:automation-deleted:archived', workspaceId: 'workspace-1',
+        },
       }],
       serverNow: '2026-08-17T00:00:00.000Z',
     },
   })
+})
+
+test('internal RPC failures never expose raw schema, default, or secret text to the browser', async () => {
+  let handler: ((endpoint: string, payload: unknown, signal: AbortSignal) => Promise<unknown>) | undefined
+  const ctx = {
+    connection: { rpc: { handle: (_channel: string, value: typeof handler) => { handler = value; return async () => {} } } },
+  }
+  const service = {
+    snapshot: async () => { throw new Error('schema default contains SENTINEL_SECRET_VALUE') },
+  }
+  registerAutomationRpc(ctx as never, service as never)
+  const response = await handler?.('snapshot', {}, new AbortController().signal)
+  assert.deepEqual(response, {
+    ok: false,
+    error: { code: 'internal', message: 'The automation request failed inside the Host.', details: {} },
+  })
+  assert.equal(JSON.stringify(response).includes('SENTINEL_SECRET_VALUE'), false)
 })
 
 test('mark-read RPC is loopback-only and propagates scoped service calls and cancellation', async () => {

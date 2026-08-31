@@ -141,6 +141,17 @@ export interface AutomationRunViewModel {
             readonly code: string;
             readonly message: string;
         };
+        readonly cleanup: {
+            readonly status: 'owned' | 'settling' | 'released' | 'unknown';
+            readonly action: 'accept' | 'discard' | null;
+            readonly updatedAt: string;
+        };
+    };
+    readonly identity: {
+        readonly automationId: string;
+        readonly definitionRevision: number;
+        readonly occurrenceKey: string;
+        readonly workspaceId: string;
     };
 }
 export interface AutomationSnapshot {

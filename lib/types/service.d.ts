@@ -119,6 +119,8 @@ export declare class AutomationService {
     private requested;
     private started;
     private stopping;
+    private disposed;
+    private disposePromise;
     private readonly ownerId;
     private readonly active;
     private migration;
@@ -144,6 +146,7 @@ export declare class AutomationService {
     dispatch(scope: AutomationScope, command: AutomationCommand, signal?: AbortSignal): Promise<AutomationCommandReceipt>;
     private applyCommand;
     private commandErrorCode;
+    private commandErrorMessage;
     markRead(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
     cancelRun(scope: AutomationScope, runId: string, signal?: AbortSignal): Promise<AutomationRun>;
     reviewRun(scope: AutomationScope, runId: string, action: 'accept' | 'keep' | 'discard', signal?: AbortSignal): Promise<AutomationRun>;
@@ -177,6 +180,8 @@ export declare class AutomationService {
     /** Serialize service-level mutations and scheduler admission around domain writes. */
     private serialize;
     private recoverInterruptedRuns;
+    /** Resume a review action whose durable owner crossed the side-effect boundary before a Host stop. */
+    private recoverReviewSettlements;
     /** Archive terminal run Sessions without changing their durable run result. */
     private archiveRunSession;
     /** Retry terminal Session archival on startup before bounded run pruning. */

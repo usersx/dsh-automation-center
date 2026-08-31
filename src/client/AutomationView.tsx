@@ -547,14 +547,21 @@ export function RecentRun({ run, now, t, busy, onOpen, onMarkRead, onCancel, onR
           <PauseIcon />{t('run.cancel')}
         </button>
       )}
-      {run.review !== undefined && (run.review.status === 'ready' || run.review.status === 'kept') && (
+      {run.review?.cleanup.status === 'settling' && (
+        <span className="dsh-automation-run-model">{t('run.reviewSettling')}</span>
+      )}
+      {run.review?.cleanup.status === 'unknown' && (
+        <span className="dsh-automation-run-model">{t('run.reviewCleanupUnknown')}</span>
+      )}
+      {run.review !== undefined && run.review.cleanup.status === 'owned'
+        && (run.review.status === 'ready' || run.review.status === 'kept') && (
         <div className="dsh-automation-card-actions">
           <span className="dsh-automation-run-model">{run.review.diffStat ?? t('run.reviewPending')}</span>
           <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onReview(run.id, 'accept')} disabled={busy}>{t('run.reviewAccept')}</button>
           <button className="dsh-automation-button dsh-automation-button--ghost" type="button" onClick={() => onReview(run.id, 'keep')} disabled={busy}>{t('run.reviewKeep')}</button>
           <button className="dsh-automation-button dsh-automation-button--danger" type="button" onClick={() => onReview(run.id, 'discard')} disabled={busy}>{t('run.reviewDiscard')}</button>
         </div>
-      )}
+        )}
     </article>
   )
 }

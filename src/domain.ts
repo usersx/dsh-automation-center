@@ -178,6 +178,11 @@ const automationRunShape = z.object({
     patchSha256: nonBlank.nullable(),
     diffStat: z.string().nullable(),
     error: z.object({ code: nonBlank, message: nonBlank }).optional(),
+    cleanup: z.object({
+      status: z.enum(['owned', 'settling', 'released', 'unknown']),
+      action: z.enum(['accept', 'discard']).nullable(),
+      updatedAt: instant,
+    }),
   }).nullable(),
 })
 
@@ -194,6 +199,19 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
               : status === 'skipped' ? 'skipped'
                 : 'unknown'
   )
+  const rawReview = typeof record.review === 'object' && record.review !== null
+    ? record.review as Record<string, unknown>
+    : undefined
+  const review = rawReview === undefined ? record.review : {
+    ...rawReview,
+    cleanup: rawReview.cleanup ?? {
+      status: rawReview.status === 'accepted' || rawReview.status === 'discarded'
+        ? 'released'
+        : rawReview.status === 'failed' ? 'unknown' : 'owned',
+      action: null,
+      updatedAt: record.finishedAt ?? record.startedAt ?? record.admittedAt ?? record.scheduledFor,
+    },
+  }
   return {
     ...record,
     admittedAt: record.admittedAt ?? record.scheduledFor,
@@ -203,7 +221,7 @@ export const automationRunSchema: z.ZodType<AutomationRun> = z.preprocess((raw) 
     lease: record.lease ?? null,
     effectiveModel: record.effectiveModel ?? null,
     effectiveContext: record.effectiveContext ?? null,
-    review: record.review ?? null,
+    review: review ?? null,
     outcome,
     attention: record.attention ?? (
       outcome === 'failed' || outcome === 'interrupted' ? 'failed'
@@ -275,6 +293,15 @@ export function createDefinition(input: CreateAutomationInput): AutomationDefini
     createdAt: now,
     updatedAt: now,
   })
+}
+
+export function automationRunIdentity(run: AutomationRun) {
+  return {
+    automationId: run.automationId,
+    definitionRevision: run.definitionRevision,
+    occurrenceKey: run.occurrenceKey,
+    workspaceId: run.targetSnapshot.workspaceId,
+  } as const
 }
 
 export function updateDefinition(

@@ -117,6 +117,17 @@ export interface AutomationRunViewModel {
     readonly patchSha256: string | null
     readonly diffStat: string | null
     readonly error?: { readonly code: string; readonly message: string }
+    readonly cleanup: {
+      readonly status: 'owned' | 'settling' | 'released' | 'unknown'
+      readonly action: 'accept' | 'discard' | null
+      readonly updatedAt: string
+    }
+  }
+  readonly identity: {
+    readonly automationId: string
+    readonly definitionRevision: number
+    readonly occurrenceKey: string
+    readonly workspaceId: string
   }
 }
 

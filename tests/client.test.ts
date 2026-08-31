@@ -43,6 +43,10 @@ const SNAPSHOT_META = {
   migration: { detectedDefinitions: 0, detectedRuns: 0, importedDefinitions: 0, importedRuns: 0 },
 } as const
 
+const identity = (automationId: string, occurrenceKey: string) => ({
+  automationId, definitionRevision: 1, occurrenceKey, workspaceId: 'workspace-1',
+})
+
 test('English and Chinese dictionaries own exactly the same keys', () => {
   assert.deepEqual(Object.keys(zh).sort(), Object.keys(en).sort())
   assert.equal(en.tab, 'Automations')
@@ -187,13 +191,14 @@ test('deriveOverview counts active definitions and unread failures', () => {
       },
     ],
     runs: [
-      { id: 'r1', automationId: 'a1', automationName: 'A', status: 'failed', trigger: 'schedule', scheduledFor: '2026-08-12T09:00:00.000Z', sessionArchived: false },
-      { id: 'r2', automationId: 'a1', automationName: 'A', status: 'failed', trigger: 'schedule', scheduledFor: '2026-08-11T09:00:00.000Z', sessionArchived: false, unread: false },
-      { id: 'r3', automationId: 'a2', automationName: 'B', status: 'succeeded', trigger: 'manual', scheduledFor: '2026-08-12T10:00:00.000Z', sessionArchived: false },
+      { id: 'r1', automationId: 'a1', automationName: 'A', status: 'failed', trigger: 'schedule', scheduledFor: '2026-08-12T09:00:00.000Z', sessionArchived: false, identity: identity('a1', 'r1') },
+      { id: 'r2', automationId: 'a1', automationName: 'A', status: 'failed', trigger: 'schedule', scheduledFor: '2026-08-11T09:00:00.000Z', sessionArchived: false, unread: false, identity: identity('a1', 'r2') },
+      { id: 'r3', automationId: 'a2', automationName: 'B', status: 'succeeded', trigger: 'manual', scheduledFor: '2026-08-12T10:00:00.000Z', sessionArchived: false, identity: identity('a2', 'r3') },
       {
         id: 'r4', automationId: 'a2', automationName: 'B', status: 'succeeded',
         outcome: 'changes_ready', attention: 'review', unread: true,
         trigger: 'manual', scheduledFor: '2026-08-12T11:00:00.000Z', sessionArchived: false,
+        identity: identity('a2', 'r4'),
       },
     ],
   }
@@ -287,6 +292,7 @@ test('an archived run labels its Session without rendering a broken open button'
     id: 'run-archived', automationId: 'automation-1', automationName: 'Archived result',
     status: 'succeeded' as const, trigger: 'manual' as const,
     scheduledFor: '2026-08-17T00:00:00.000Z', sessionId: 'dsh-automation-session-archived',
+    identity: identity('automation-1', 'run-archived'),
   }
   const archived = RecentRun({
     run: { ...common, sessionArchived: true },
