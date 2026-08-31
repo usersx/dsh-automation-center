@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  automationDefinitionSchema, automationDomainSpec, automationRunSchema,
+  automationDefinitionSchema, automationDomainSpec, automationRunIdentity, automationRunSchema,
   createDefinition, createManualRun, createScheduledRun, deleteDefinition,
   pauseDefinition, resumeDefinition, runIdForOccurrence, updateDefinition,
 } from '../src/domain.ts'
@@ -102,6 +102,26 @@ test('scheduled occurrence id is deterministic while manual runs require a nonce
   const manualOne = createManualRun(value, '2026-08-14T01:00:00Z', 'click-1')
   const manualTwo = createManualRun(value, '2026-08-14T01:00:00Z', 'click-2')
   assert.notEqual(manualOne.id, manualTwo.id)
+  assert.deepEqual(automationRunIdentity(manualOne), {
+    automationId: value.id,
+    definitionRevision: value.revision,
+    occurrenceKey: manualOne.occurrenceKey,
+    workspaceId: value.workspaceId,
+  })
+})
+
+test('legacy review rows gain durable cleanup ownership without changing their patch identity', () => {
+  const run = createManualRun(definition(), '2026-08-14T01:00:00Z', 'legacy-review')
+  const parsed = automationRunSchema.parse({
+    ...run,
+    review: {
+      mode: 'worktree', status: 'ready', baseSha: 'abc', worktreePath: '/tmp/worktree',
+      patchSha256: 'def', diffStat: '1 file changed',
+    },
+  })
+  assert.deepEqual(parsed.review?.cleanup, {
+    status: 'owned', action: null, updatedAt: run.admittedAt,
+  })
 })
 
 test('strict validation rejects blank prompts and unsafe permission presets', () => {

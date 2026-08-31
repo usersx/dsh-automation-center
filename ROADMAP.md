@@ -61,5 +61,17 @@ The Shell extension remains an upstream enhancement, not an installation prerequ
 - [x] Record effective actor/capability and align the model-visible tool catalog with unattended policy.
 - [x] Add isolated Git worktree Review with accept/keep/discard and fail-closed source drift.
 - [x] Install and exercise an intermediate artifact on stock DSH `0.1.2-alpha.1` Web.
-- [ ] Re-run final `0.1.0-alpha.7` artifact on alpha.1 Web and macOS Desktop 2.0.3.
-- [ ] Publish and read back the Alpha.7 GitHub/npm release evidence.
+- [x] Re-run final `0.1.0-alpha.7` artifact on alpha.1 Web and macOS Desktop 2.0.3.
+- [x] Publish and read back the Alpha.7 GitHub Release, checksum, SBOM, and attestation; npm remains permission-blocked and is not claimed.
+
+## Milestone 7 — Cleanup ownership and host safety gates
+
+- [x] Retain retryable Host/service cleanup ownership until asynchronous disposal settles.
+- [x] Persist Git review cleanup ownership and reconcile interrupted accept/discard actions on restart.
+- [x] Publish stable Run identity from existing Definition revision, occurrence, and Workspace scope.
+- [x] Reject explicit sandbox overrides inside fixed-policy unattended Agents.
+- [x] Prevent raw internal errors from crossing the Automation RPC wire face.
+- [ ] Run the DSH complex Settings-secret adversarial matrix after the host exposes a fail-closed wire descriptor.
+- [ ] Observe Result Session idle-dispose/refollow convergence on an upstream DSH build containing the host fix.
+- [ ] Define MCP instructions provenance/cache identity only when a configurable MCP adapter enters this product.
+- [x] Install and exercise the Alpha.8 candidate on stock DSH `0.1.2-alpha.2` before merging, including direct/worktree failure paths and ghost-Session negative readback.

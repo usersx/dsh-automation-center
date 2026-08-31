@@ -4,6 +4,28 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] - 2026-08-31
+
+### Added
+
+- Durable Git review cleanup ownership with `owned → settling → released|unknown` state, restart reconciliation, and idempotent accept/discard recovery.
+- A stable non-secret Run identity contract covering automation, definition revision, occurrence, and Workspace scope on RPC snapshots and lifecycle events.
+
+### Changed
+
+- Host and storage cleanup now retain one retryable owner until asynchronous disposal has actually settled.
+- Unattended Agents reject every explicit sandbox override and are prompted to call tools without `sandbox_permissions` or `justification`.
+- Extend the stock DSH install matrix through the new `0.1.2-alpha.2` host while retaining alpha.1 regression coverage.
+
+### Security
+
+- Unexpected Host and command errors use fixed public messages instead of returning raw schema, default, or secret-bearing exception text to the browser.
+- The package contract keeps this plugin's own Settings Config free of secret-bearing schema roles until DSH provides a fail-closed wire descriptor.
+
+### Fixed
+
+- A Git review setup failure no longer exposes a preallocated Result Session ID when no Agent or Session was ever created.
+
 ## [0.1.0-alpha.7] - 2026-08-30
 
 ### Added
@@ -94,7 +116,8 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 - First npm pre-release of the global Automation Center and fresh-session execution engine.
 
-[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.7...HEAD
+[Unreleased]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.8...HEAD
+[0.1.0-alpha.8]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.7...v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/usersx/dsh-automation-center/compare/v0.1.0-alpha.4...v0.1.0-alpha.5

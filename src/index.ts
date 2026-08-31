@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
+import { createOwnedCleanup } from './cleanup.ts'
 import { registerAutomationRpc } from './rpc.ts'
 import { AutomationService } from './service.ts'
 import { registerAutomationTools } from './tools.ts'
@@ -86,15 +87,12 @@ export async function apply(ctx: Context, rawConfig: Config): Promise<void> {
       archiveRunSessions: config.archiveRunSessions,
     })
     const agentTools = new Map<object, () => void | Promise<void>>()
-    let cleaned = false
     let stopCreated = () => {}
     let stopDisposed = () => {}
     let stopApproval = () => {}
     let removeRpc = async (): Promise<void> => {}
 
-    const cleanup = async (): Promise<void> => {
-      if (cleaned) return
-      cleaned = true
+    const cleanupOwner = createOwnedCleanup(async () => {
       alive = false
       for (const stop of [stopCreated, stopDisposed, stopApproval]) {
         try { stop() } catch (error: unknown) {
@@ -105,14 +103,17 @@ export async function apply(ctx: Context, rawConfig: Config): Promise<void> {
         removeRpc(),
         ...[...agentTools.values()].reverse().map(dispose => Promise.resolve().then(dispose)),
       ])
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          ctx.logger.warn(`dsh-automation-center: contribution cleanup failed: ${String(result.reason)}`)
+      const failures = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      if (failures.length > 0) {
+        for (const failure of failures) {
+          ctx.logger.warn(`dsh-automation-center: contribution cleanup failed: ${String(failure.reason)}`)
         }
+        throw new AggregateError(failures.map(failure => failure.reason), 'Automation contribution cleanup did not settle.')
       }
       agentTools.clear()
       await service.dispose()
-    }
+    })
+    const cleanup = cleanupOwner.run
 
     try {
       const mountTools = (agent: any): void => {

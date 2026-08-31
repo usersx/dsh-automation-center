@@ -45,6 +45,12 @@ export declare const automationDomainSpec: {
     };
 };
 export declare function createDefinition(input: CreateAutomationInput): AutomationDefinition;
+export declare function automationRunIdentity(run: AutomationRun): {
+    readonly automationId: string;
+    readonly definitionRevision: number;
+    readonly occurrenceKey: string;
+    readonly workspaceId: string;
+};
 export declare function updateDefinition(current: AutomationDefinition, input: UpdateAutomationInput): AutomationDefinition;
 export declare function pauseDefinition(current: AutomationDefinition, now: string): AutomationDefinition;
 export declare function resumeDefinition(current: AutomationDefinition, now: string): AutomationDefinition;

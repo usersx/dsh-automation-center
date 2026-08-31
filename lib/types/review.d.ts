@@ -8,3 +8,5 @@ export declare function collectGitReview(review: GitReviewState): Promise<GitRev
 export declare function acceptGitReview(sourceCwd: string, review: GitReviewState): Promise<GitReviewState>;
 export declare function keepGitReview(review: GitReviewState): GitReviewState;
 export declare function discardGitReview(sourceCwd: string, review: GitReviewState): Promise<GitReviewState>;
+export declare function beginGitReviewSettlement(review: GitReviewState, action: 'accept' | 'discard', updatedAt?: string): GitReviewState;
+export declare function failGitReviewSettlement(review: GitReviewState, _error: unknown, updatedAt?: string): GitReviewState;

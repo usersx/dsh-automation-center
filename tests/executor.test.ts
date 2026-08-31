@@ -142,6 +142,15 @@ test('unattended tool guard blocks interaction, delegation, and background proce
   assert.match(unattendedToolGuardReason('cordis_mount', {}) ?? '', /allowlist/)
   assert.match(unattendedToolGuardReason('automation_create', {}) ?? '', /allowlist/)
   assert.match(unattendedToolGuardReason('bash', { run_in_background: true }) ?? '', /Background/)
+  assert.match(unattendedToolGuardReason(
+    'bash', { sandbox_permissions: 'workspace-write' }, 'workspace-write',
+  ) ?? '', /retry without sandbox_permissions/i)
+  assert.match(unattendedToolGuardReason(
+    'bash', { sandbox_permissions: 'read-only', justification: '' }, 'workspace-write',
+  ) ?? '', /policy is fixed/)
+  assert.match(unattendedToolGuardReason(
+    'bash', { sandbox_permissions: 'danger-full-access' }, 'read-only',
+  ) ?? '', /unavailable/)
 })
 
 test('unattended tool guard preserves foreground coding and read tools', () => {

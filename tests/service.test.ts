@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
-import { createDefinition, createManualRun, createScheduledRun } from '../src/domain.ts'
+import { automationRunIdentity, createDefinition, createManualRun, createScheduledRun } from '../src/domain.ts'
+import { beginGitReviewSettlement, collectGitReview, prepareGitReview } from '../src/review.ts'
 import { AutomationService, type AutomationConfig } from '../src/service.ts'
 import type { LegacyDefinition, LegacyRun } from '../src/legacy.ts'
 import type { AutomationDefinition, AutomationLifecycleEvent, AutomationRun } from '../src/types.ts'
@@ -44,10 +45,13 @@ class MemoryDomain {
   readonly runs: MemoryTable<AutomationRun>
   readonly receipts = new MemoryTable<unknown>()
   closed = false
+  private closeFailures: number
   constructor(
     definitions: readonly AutomationDefinition[] = [],
     runs: readonly AutomationRun[] = [],
+    closeFailures = 0,
   ) {
+    this.closeFailures = closeFailures
     const writable = () => !this.closed
     this.definitions = new MemoryTable(new Map(definitions.map(value => [value.id, value])), writable)
     this.runs = new MemoryTable(new Map(runs.map(value => [value.id, value])), writable)
@@ -56,7 +60,13 @@ class MemoryDomain {
   table(name: 'definitions' | 'runs' | 'receipts'): MemoryTable<AutomationDefinition> | MemoryTable<AutomationRun> | MemoryTable<unknown> {
     return name === 'definitions' ? this.definitions : name === 'runs' ? this.runs : this.receipts
   }
-  async close(): Promise<void> { this.closed = true }
+  async close(): Promise<void> {
+    if (this.closeFailures > 0) {
+      this.closeFailures -= 1
+      throw new Error('transient domain close failure')
+    }
+    this.closed = true
+  }
 }
 
 const scope = { sessionId: 'session-source', creatorKind: 'agent' as const }
@@ -98,9 +108,11 @@ async function harness(seed?: {
   readonly resolveModelGate?: Promise<void>
   readonly resolveWorkspaceGate?: Promise<void>
   readonly onResolveWorkspace?: () => void
+  readonly resolveWorkspaceError?: Error
   readonly legacyDefinitions?: readonly LegacyDefinition[]
   readonly legacyRuns?: readonly LegacyRun[]
   readonly currentDomain?: MemoryDomain
+  readonly closeFailures?: number
   readonly workspacePath?: string
   readonly mutateExecutionCwd?: (cwd: string) => Promise<void>
 }): Promise<{
@@ -113,7 +125,9 @@ async function harness(seed?: {
   removeSourceAgent(): void
   reopenService(): Promise<AutomationService>
 }> {
-  const domain = seed?.currentDomain ?? new MemoryDomain(seed?.definitions, seed?.runs)
+  const domain = seed?.currentDomain ?? new MemoryDomain(
+    seed?.definitions, seed?.runs, seed?.closeFailures,
+  )
   const legacyDefinitions = new MemoryTable(new Map((seed?.legacyDefinitions ?? []).map(value => [value.id, value])))
   const legacyRuns = new MemoryTable(new Map((seed?.legacyRuns ?? []).map(value => [value.id, value])))
   const legacyDomain = {
@@ -180,6 +194,7 @@ async function harness(seed?: {
       resolveByPath: async (path: string) => {
         seed?.onResolveWorkspace?.()
         await seed?.resolveWorkspaceGate
+        if (seed?.resolveWorkspaceError !== undefined) throw seed.resolveWorkspaceError
         if (path === workspace.path) return workspace
         if (path === otherWorkspace.path) return otherWorkspace
         return undefined
@@ -366,6 +381,25 @@ test('dispatch returns a durable receipt and replays every mutating command once
   )
   assert.equal((await service.snapshot(scope)).runs.length, 1)
   await service.dispose()
+})
+
+test('command receipts do not expose unexpected internal error text', async () => {
+  const definition = storedDefinition('2026-08-13T00:00:00Z')
+  const { service } = await harness({
+    definitions: [definition],
+    resolveWorkspaceError: new Error('schema default contains SENTINEL_SECRET_VALUE'),
+  })
+  try {
+    const receipt = await service.dispatch(scope, {
+      kind: 'run-now', requestId: 'secret-safe-error', automationId: definition.id,
+    })
+    assert.equal(receipt.outcome, 'rejected')
+    assert.equal(receipt.error?.code, 'invalid_command')
+    assert.equal(receipt.error?.message, 'The automation command was rejected.')
+    assert.equal(JSON.stringify(receipt).includes('SENTINEL_SECRET_VALUE'), false)
+  } finally {
+    await service.dispose()
+  }
 })
 
 test('legacy definitions and runs import once while source records remain unchanged', async () => {
@@ -766,6 +800,16 @@ test('mark read is serialized ahead of disposal so it cannot write after domain 
   assert.equal(domain.closed, true)
 })
 
+test('service disposal retains ownership and retries a transient domain close failure', async () => {
+  const { service, domain } = await harness({ closeFailures: 1 })
+  const first = service.dispose()
+  assert.equal(first, service.dispose(), 'concurrent disposal callers must share one owner')
+  await assert.rejects(first, /transient domain close failure/)
+  assert.equal(domain.closed, false)
+  await service.dispose()
+  assert.equal(domain.closed, true)
+})
+
 test('snapshot holds the domain read lease until workspace resolution completes', async () => {
   let releaseWorkspace = () => {}
   const resolveWorkspaceGate = new Promise<void>(resolve => { releaseWorkspace = resolve })
@@ -1001,6 +1045,7 @@ test('supervisor persists every execution phase and clears its lease at terminal
     assert.deepEqual(runEvents.map(event => event.kind), [
       'admitted', 'phase', 'phase', 'phase', 'phase', 'terminal',
     ])
+    assert.deepEqual(runEvents.map(event => event.identity), runEvents.map(() => automationRunIdentity(queued)))
     assert.equal(runEvents.at(-1)?.attention, 'unknown')
   } finally {
     await service.dispose()
@@ -1066,6 +1111,72 @@ test('worktree review isolates edits and accepts them only through the review co
     assert.equal(accepted.review?.status, 'accepted')
     assert.equal(accepted.attention, 'none')
     assert.equal(normalizeLineEndings(await readFile(join(repository, 'review.txt'), 'utf8')), 'reviewed\n')
+  } finally {
+    await fixture.service.dispose()
+  }
+})
+
+test('worktree setup failure never exposes a Result Session that was not created', async () => {
+  const repository = await mkdtemp(join(tmpdir(), 'automation-review-dirty-'))
+  await execFileAsync('git', ['-C', repository, 'init'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.name', 'Automation Test'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.email', 'automation@example.invalid'])
+  await writeFile(join(repository, 'base.txt'), 'base\n')
+  await execFileAsync('git', ['-C', repository, 'add', 'base.txt'])
+  await execFileAsync('git', ['-C', repository, 'commit', '-m', 'base'])
+  await writeFile(join(repository, 'dirty.txt'), 'not committed\n')
+  const fixture = await harness({
+    completeRuns: true, workspacePath: repository, config: { maxConcurrentRuns: 1 },
+  })
+  try {
+    const definition = await fixture.service.create(scope, {
+      name: 'Dirty worktree', prompt: 'Inspect one file.',
+      schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+      permissionPreset: 'workspace-write', reviewMode: 'worktree',
+    })
+    const queued = await fixture.service.runNow(scope, definition.id)
+    fixture.service.start()
+    await waitFor(() => fixture.domain.runs.get(queued.id)?.status === 'failed')
+    const failed = fixture.domain.runs.get(queued.id)
+    assert.equal(failed?.error?.code, 'review_setup_failed')
+    assert.equal(failed?.sessionId, null)
+    assert.equal((await fixture.service.snapshot(scope)).runs[0]?.sessionId, null)
+  } finally {
+    await fixture.service.dispose()
+  }
+})
+
+test('startup recovery retains a settling Git review owner until discard cleanup releases it', async () => {
+  const repository = await mkdtemp(join(tmpdir(), 'automation-review-recovery-'))
+  await execFileAsync('git', ['-C', repository, 'init'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.name', 'Automation Test'])
+  await execFileAsync('git', ['-C', repository, 'config', 'user.email', 'automation@example.invalid'])
+  await writeFile(join(repository, 'base.txt'), 'base\n')
+  await execFileAsync('git', ['-C', repository, 'add', 'base.txt'])
+  await execFileAsync('git', ['-C', repository, 'commit', '-m', 'base'])
+  const definition = createDefinition({
+    id: 'automation-review-recovery', name: 'Review recovery', prompt: 'Inspect one file.',
+    schedule: { kind: 'daily', time: '09:00', timeZone: 'UTC' },
+    workspaceId: 'workspace-1', cwd: repository, agentPreset: 'standard',
+    permissionPreset: 'workspace-write', reviewMode: 'worktree',
+    createdBy: { kind: 'web', sessionId: 'web:workspace-1' }, now: '2026-08-30T00:00:00Z',
+  })
+  const prepared = await prepareGitReview(repository)
+  const settling = beginGitReviewSettlement(
+    await collectGitReview(prepared), 'discard', '2026-08-30T00:02:00Z',
+  )
+  const queued = createManualRun(definition, '2026-08-30T00:01:00Z', 'review-recovery')
+  const run: AutomationRun = {
+    ...queued, status: 'succeeded', phase: null, finishedAt: '2026-08-30T00:02:00Z',
+    outcome: 'changes_ready', attention: 'review', review: settling,
+  }
+  const fixture = await harness({ definitions: [definition], runs: [run], workspacePath: repository })
+  try {
+    const recovered = fixture.domain.runs.get(run.id)
+    assert.equal(recovered?.review?.status, 'discarded')
+    assert.equal(recovered?.review?.cleanup.status, 'released')
+    assert.equal(recovered?.attention, 'none')
+    await assert.rejects(access(prepared.worktreePath), /ENOENT/)
   } finally {
     await fixture.service.dispose()
   }

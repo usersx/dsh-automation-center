@@ -1,6 +1,7 @@
 /** Loopback-only Host RPC adapter for the Automation Web client. */
 
 import type { AutomationService } from './service.ts'
+import { automationRunIdentity } from './domain.ts'
 import type { AutomationSchedule as DomainSchedule, ModelPolicy, Weekday } from './types.ts'
 
 const WEEKDAYS: readonly Weekday[] = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
@@ -115,7 +116,9 @@ function errorResult(
     ok: false,
     error: {
       code: badRequest ? 'bad-request' : 'internal',
-      message,
+      message: badRequest
+        ? 'The automation request is invalid or no longer applicable.'
+        : 'The automation request failed inside the Host.',
       details: badRequest ? { issues: [] } : {},
     },
   }
@@ -198,6 +201,7 @@ async function snapshotValue(service: AutomationService, payload: Record<string,
       ...(run.attention == null ? {} : { attention: run.attention }),
       ...(run.effect == null ? {} : { effect: run.effect }),
       ...(run.review == null ? {} : { review: run.review }),
+      identity: automationRunIdentity(run),
       trigger: run.trigger,
       scheduledFor: run.scheduledFor,
       ...(run.admittedAt == null ? {} : { admittedAt: run.admittedAt }),

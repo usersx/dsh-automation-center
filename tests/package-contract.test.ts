@@ -70,4 +70,11 @@ test('package keeps the installable DSH bundle and Web client contract', async (
   assert.match(hostBundle, /archiveRunSessions: .*\.boolean\(\)\.default\(false\)/)
   assert.match(hostBundle, /node_modules\/\.pnpm\/luxon@/)
   assert.match(hostBundle, /node_modules\/\.pnpm\/zod@/)
+
+  // DSH alpha.1 documents that complex secret-bearing Settings schemas are
+  // not a proven wire boundary. Keep this plugin's own Config primitive-only
+  // until a fail-closed host descriptor is available.
+  const hostSource = await readFile(new URL('src/index.ts', root), 'utf8')
+  assert.doesNotMatch(hostSource, /\.role\(['"]secret['"]\)/)
+  assert.doesNotMatch(hostSource, /\.secret\(/)
 })

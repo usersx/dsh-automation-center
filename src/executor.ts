@@ -38,7 +38,17 @@ export function unattendedToolNames(): readonly string[] {
 }
 
 /** Final scoped denial for capabilities that require a person or spawn another authority boundary. */
-export function unattendedToolGuardReason(name: string, args: unknown): string | undefined {
+export function unattendedToolGuardReason(
+  name: string,
+  args: unknown,
+  permissionPreset?: AutomationRun['targetSnapshot']['permissionPreset'],
+): string | undefined {
+  if (typeof args === 'object' && args !== null) {
+    const request = args as Record<string, unknown>
+    if ('sandbox_permissions' in request || 'sandboxPermissions' in request || 'justification' in request) {
+      return `Sandbox permission overrides are unavailable in unattended automation; the ${permissionPreset ?? 'current'} policy is fixed. Retry without sandbox_permissions or justification.`
+    }
+  }
   if ((name === 'bash' || name === 'pwsh')
     && typeof args === 'object' && args !== null
     && (args as Record<string, unknown>).run_in_background === true) {
@@ -284,7 +294,9 @@ export async function executeAutomationRun(
         } else {
           effectiveTools = unattendedToolNames()
         }
-        agentCtx.tools.guard((exec: ToolExecution) => unattendedToolGuardReason(exec.name, exec.arguments))
+        agentCtx.tools.guard((exec: ToolExecution) => unattendedToolGuardReason(
+          exec.name, exec.arguments, target.permissionPreset,
+        ))
       },
     }))
     await handle.agent.whenIdle()
@@ -303,7 +315,7 @@ export async function executeAutomationRun(
     handle.agent.followup(createUserMessage({
       content: [{
         type: 'text',
-        text: `${run.promptSnapshot}\n\nBefore your final response, call automation_report_outcome exactly once with the structured result. Do not infer this value from prose after the run.`,
+        text: `${run.promptSnapshot}\n\nThe sandbox policy is fixed for this unattended run. Do not pass sandbox_permissions or justification to tools. Before your final response, call automation_report_outcome exactly once with the structured result. Do not infer this value from prose after the run.`,
       }],
       source: {
         kind: 'automation',

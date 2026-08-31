@@ -23,6 +23,18 @@
 | 通用 DAG、多 Agent、分布式 Scheduler、大连接器市场、云 sandbox | 未实现 | 日报 08-23—08-29 均列为暂不投入 | Deferred P2：不属于本地 Automation Center 当前发布目标 |
 | Windows/Linux Desktop 实机 | CI 在两 OS 执行质量门；无两台原生桌面环境 | GitHub Actions（发布前） | NOT RUN（不能用 CI 冒充 GUI E2E） |
 
+## 08-30 日报的 Unreleased 增量
+
+| 新增主题 | 本轮实现 | 当前证据与边界 | 状态 |
+|---|---|---|---|
+| teardown cleanup owner | Host/service cleanup 失败可重试、并发共享 owner；Git review 在副作用前持久 `owned→settling`，accept/discard 可重启对账 | cleanup failure/retry、dispose coalescing、patch-applied recovery、missing-worktree discard、startup reconcile 测试 | Completed |
+| stable replay/cache identity | 从既有 `automationId + definitionRevision + occurrenceKey + workspaceId` 派生非 secret identity，并进入 RPC snapshot/lifecycle event | lifecycle 全序列 identity 不变、domain/RPC 测试 | Completed；未新增 Replay/Cache 实体 |
+| sandbox non-widening | 固定策略的无人值守 Agent 拒绝 same/narrower/wider 显式 override，并在 prompt/guard 要求去掉 `sandbox_permissions`/`justification` 重试 | guard 矩阵测试；真实 alpha.1 Host 工具执行待 E2E | Partial（插件边界完成，宿主验证 NOT RUN） |
+| Settings secret fail-closed | 本插件 Config 保持 primitive-only/no secret role；RPC 与 Command Receipt 的未知内部错误改成固定公开文案，不回传 schema/default/raw exception | package contract、RPC sentinel、Receipt sentinel 测试 | Partial（本插件 wire face 完成；DSH complex schema redactor 仍是宿主缺口） |
+| Result Session dispose/refollow | 继续复用 Result Session 与轮询 snapshot；未复制宿主 journal/follow 状态机 | DSH #5056 无上游 Release；本项目现有冷启动 PASS 不覆盖 idle dispose | Deferred to upstream acceptance |
+| MCP instructions/cache | 当前无可配置 MCP Adapter，未知 MCP 工具继续对无人值守 Agent 隐藏 | 无产品连接配置/凭据/transport seam | Deferred；不提前新增实体 |
+| DSH alpha.2 漂移 | 官方 `0.1.2-alpha.2` 新增连接重试、长历史性能、RemoteError 与 Node 24 修复；CI 已加入 tag 行 | 官方源码 Node 24 build PASS；Alpha.8 候选包在 fresh Profile 完成安装、Host/Client、Settings/Definition、direct/worktree `MISSING_CREDENTIAL`、Result Session/Attention、ghost `sessionId=null` 与 keep readback | Tested（真实模型成功 Run、复杂 secret schema、idle-dispose refollow 未运行） |
+
 ## 发布结果与稳定版后续
 
 1. **GitHub Alpha.7 prerelease 已完成。** PR/main 三平台 CI 与三个 DSH tag 安装矩阵通过；tag、tgz、checksum、SPDX SBOM 和 attestation 已回读。
